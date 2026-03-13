@@ -33,17 +33,20 @@ uses the automatic Supervisor token (no manual token needed), and survives reboo
 
 You need two entity IDs from HA before you configure anything.
 
-1. In HA, go to **Settings → Devices & Services → Integrations → Google Nest**.
-2. Click your doorbell device.
-3. Note the **camera entity ID** (e.g. `camera.front_door`) and the
-   **person binary sensor** (e.g. `binary_sensor.front_door_person`).
+1. In HA go to **Developer Tools → States**.
+2. In the filter box type your doorbell's name (e.g. `front_door`).
+3. Note the two entities you need:
 
-You can also find them via **Developer Tools → States** — filter the list by
-typing `front_door` or whatever your device is named.
+| What to look for | Example entity ID | Notes |
+|---|---|---|
+| Camera (live feed) | `camera.front_door` | Always starts with `camera.` |
+| Motion / person events | `event.front_door_bell_motion` | **Newer** Nest integration (2024+) |
+| — or — | `binary_sensor.front_door_person` | **Older** Nest integration |
 
-> **Tip:** The person sensor is usually named
-> `binary_sensor.<device_name>_person`. If you don't see one, check
-> **Settings → Devices & Services → Entities** and search for "person".
+> **Which do I have?**
+> If you see `event.front_door_bell_motion` (or similar) — use that.
+> If you only see `binary_sensor.front_door_person` — use that instead.
+> The app and automation both support either type automatically.
 
 ### Step 2 — Set up snapshot saving
 

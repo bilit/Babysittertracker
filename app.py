@@ -168,14 +168,18 @@ def ha_headers():
 
 def fetch_ha_person_events(days_back: int = 14):
     """
-    Query HA history API for person-detection state changes and cache them as
-    synthetic snapshots (source='ha_event').
+    Query HA history API for motion/person events and cache them as synthetic
+    snapshots (source='ha_event').
+
+    Supports two entity types used by the Google Nest integration:
+      - binary_sensor.*  (older integration) — only records state == "on"
+      - event.*          (newer integration) — every state change is an event;
+                         state value is a timestamp string, not "on"/"off"
     """
     if not HA_TOKEN:
         return
     start = now_local() - timedelta(days=days_back)
-    start_str = start.isoformat()
-    url = f"{HA_URL}/api/history/period/{start_str}"
+    url = f"{HA_URL}/api/history/period/{start.isoformat()}"
     params = {"filter_entity_id": PERSON_SENSOR, "minimal_response": "true"}
     try:
         resp = requests.get(url, headers=ha_headers(), params=params, timeout=10)
@@ -187,10 +191,22 @@ def fetch_ha_person_events(days_back: int = 14):
     if not data or not data[0]:
         return
 
+    is_binary_sensor = PERSON_SENSOR.startswith("binary_sensor.")
+
     with get_db() as db:
         for entry in data[0]:
-            if entry.get("state") != "on":
-                continue
+            state = entry.get("state", "")
+
+            if is_binary_sensor:
+                # binary_sensor: only care about the "on" (detected) transition
+                if state != "on":
+                    continue
+            else:
+                # event entity: state is a timestamp string on each new event;
+                # skip non-event states like "unavailable" / "unknown" / ""
+                if state in ("unavailable", "unknown", "none", ""):
+                    continue
+
             last_changed = entry.get("last_changed") or entry.get("last_updated")
             if not last_changed:
                 continue
@@ -199,7 +215,7 @@ def fetch_ha_person_events(days_back: int = 14):
                 ts = ts.astimezone(local_tz())
             except ValueError:
                 continue
-            # Use a synthetic filename so we can proxy the camera snapshot
+
             fake_filename = f"ha_event_{ts.strftime('%Y%m%d_%H%M%S')}.jpg"
             db.execute(
                 "INSERT OR IGNORE INTO snapshots (filename, ts, source) VALUES (?, ?, 'ha_event')",

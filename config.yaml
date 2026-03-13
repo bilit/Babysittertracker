@@ -32,7 +32,9 @@ map:
 # ── User-configurable options ────────────────────────────────────────────────
 options:
   camera_entity: "camera.front_door"
-  person_sensor: "binary_sensor.front_door_person"
+  # Accepts either an event entity (newer Nest integration, e.g. event.front_door_bell_motion)
+  # or a binary_sensor (older integration, e.g. binary_sensor.front_door_person)
+  person_sensor: "event.front_door_bell_motion"
   snapshot_subdir: "babysitter_snapshots"
   timezone: "America/New_York"
 

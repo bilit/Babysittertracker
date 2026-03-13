@@ -1,38 +1,48 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# Home Assistant Automation — Save doorbell snapshot on person detection
+# Home Assistant Automation — Save doorbell snapshot on person / motion event
 #
 # Paste this into Settings → Automations → + Create Automation → Edit in YAML.
 #
-# IMPORTANT: replace the two entity IDs with your actual Nest entities.
-# Find them at: Settings → Devices & Services → Google Nest → your doorbell
+# The newer Google Nest integration (2024+) uses event entities instead of
+# binary sensors. Use whichever block matches what you see in HA.
 #
-# Choose the filename path for your deployment:
-#   - HA Add-on:         /share/babysitter_snapshots/doorbell_....jpg
-#   - Standalone Docker: /config/www/snapshots/doorbell_....jpg
+# To find your entity ID:
+#   Developer Tools → States → filter by your doorbell name
+#   Look for entities starting with  event.*  or  binary_sensor.*
 # ──────────────────────────────────────────────────────────────────────────────
 
-alias: "Save doorbell snapshot on person detected"
+alias: "Save doorbell snapshot on person/motion detected"
 description: >
-  When the Nest doorbell detects a person, save a timestamped JPEG so the
-  Babysitter Tracker can display it.
+  When the Nest doorbell fires a motion or person event, save a timestamped
+  JPEG so the Babysitter Tracker can display it.
 
+# ── OPTION A: event entity (newer Nest integration — most common) ─────────────
+# entity state changes to a new timestamp on every event fire
 trigger:
   - platform: state
-    entity_id: binary_sensor.front_door_person    # ← CHANGE to your sensor
-    to: "on"
+    entity_id: event.front_door_bell_motion    # ← CHANGE to your event entity
+
+# ── OPTION B: binary_sensor (older Nest integration) ─────────────────────────
+# Uncomment this block and comment out Option A if your entity starts with
+# binary_sensor.  e.g.  binary_sensor.front_door_person
+#
+# trigger:
+#   - platform: state
+#     entity_id: binary_sensor.front_door_person
+#     to: "on"
 
 condition: []
 
 action:
   - service: camera.snapshot
     target:
-      entity_id: camera.front_door               # ← CHANGE to your camera
+      entity_id: camera.front_door               # ← CHANGE to your camera entity
     data:
       # ── For HA Add-on deployment ──────────────────────────────────────────
       filename: >-
         /share/babysitter_snapshots/doorbell_{{ now().strftime('%Y%m%d_%H%M%S') }}.jpg
 
-      # ── For standalone Docker deployment (comment the above, uncomment below)
+      # ── For standalone Docker deployment (comment above, uncomment below) ─
       # filename: >-
       #   /config/www/snapshots/doorbell_{{ now().strftime('%Y%m%d_%H%M%S') }}.jpg
 
