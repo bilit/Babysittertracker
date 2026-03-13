@@ -1,237 +1,347 @@
 # Babysitter Hours Tracker
 
-A Home Assistant add-on (or standalone Docker app) that shows person-detection
-snapshots from your Nest doorbell, lets you tag arrivals and departures, and
-automatically calculates weekly pay.
+Tracks babysitter hours using video clips your Nest doorbell already saves
+automatically in Home Assistant. Select the arrival and departure clip each
+day — the app calculates and stores the pay split.
 
-| Time window        | Rate        |
-|--------------------|-------------|
-| 9:00 AM – 3:00 PM  | **$16 / hr** |
-| All other hours    | **$10 / hr** |
-
-Hours that straddle the rate boundary are split and calculated correctly.
+| Time window       | Rate        |
+|-------------------|-------------|
+| 9:00 AM – 3:00 PM | **$16 / hr** |
+| All other hours   | **$10 / hr** |
 
 ---
 
-## How It Works
+## Prerequisites
 
-1. Your Nest doorbell detects a person → HA saves a timestamped snapshot.
-2. Open the tracker → browse snapshot thumbnails for the week.
-3. Click **Arrived** on the photo of the babysitter arriving, **Departed** on the one leaving.
-4. Live pay preview appears — click **Save Session**.
-5. View the **Weekly Summary** for a full per-day and per-week breakdown.
-6. Every session's hours and pay amounts are stored in the database — no recalculation needed at the end of the week.
+Before you start, confirm you have:
+
+- **Home Assistant OS** or **Home Assistant Supervised** running on your
+  network (Raspberry Pi, NUC, etc.). This is the version with the
+  **Add-on Store** in Settings.
+- **Google Nest integration** already set up in HA with your doorbell linked.
+  If your doorbell shows a live feed in HA, you're good.
+- A way to copy files to your HA machine — either the **Samba share** add-on
+  (easiest) or the **SSH & Web Terminal** add-on.
 
 ---
 
-## Deployment Option A — HA Add-on (recommended for HA OS / Supervised)
+## Part 1 — Find your entity IDs (5 minutes)
 
-This is the cleanest option. The app appears as a panel inside your HA sidebar,
-uses the automatic Supervisor token (no manual token needed), and survives reboots.
+You need to know the exact entity IDs HA assigned to your Nest doorbell.
 
-### Step 1 — Find your Nest entity IDs
+1. Open your HA dashboard and click **Developer Tools** (the `</>` icon in
+   the left sidebar).
+2. Click the **States** tab.
+3. In the **Filter entities** box at the top, type the name of your doorbell.
+   Try `front_door`, `doorbell`, or `nest` until you see results.
+4. Look for these two entities and write down their exact IDs:
 
-You need two entity IDs from HA before you configure anything.
+**Camera entity** — the live video feed. It will look like:
+```
+camera.front_door
+camera.nest_doorbell
+camera.garage_doorbell
+```
+It always starts with `camera.`
 
-1. In HA go to **Developer Tools → States**.
-2. In the filter box type your doorbell's name (e.g. `front_door`).
-3. Note the two entities you need:
+**Event/motion entity** — fires each time motion or a person is detected.
+Newer Nest integration (2024+) uses `event.*`:
+```
+event.front_door_bell_motion
+event.nest_doorbell_motion
+```
+Older integration uses `binary_sensor.*`:
+```
+binary_sensor.front_door_person
+binary_sensor.nest_doorbell_person
+```
+If you see both, use the `event.*` one.
 
-| What to look for | Example entity ID | Notes |
-|---|---|---|
-| Camera (live feed) | `camera.front_door` | Always starts with `camera.` |
-| Motion / person events | `event.front_door_bell_motion` | **Newer** Nest integration (2024+) |
-| — or — | `binary_sensor.front_door_person` | **Older** Nest integration |
+> **Can't find them?**
+> Go to **Settings → Devices & Services → Google Nest** → click your
+> doorbell device → scroll down to see every entity it exposes.
 
-> **Which do I have?**
-> If you see `event.front_door_bell_motion` (or similar) — use that.
-> If you only see `binary_sensor.front_door_person` — use that instead.
-> The app and automation both support either type automatically.
+Write these down — you'll need them in Part 3.
 
-### Step 2 — Set up snapshot saving
+---
 
-The app needs a folder of saved images to display. Add the provided automation
-to HA so a snapshot is saved every time someone is detected.
+## Part 2 — Verify clips are already being saved (2 minutes)
 
-1. In HA go to **Settings → Automations → + Create Automation → Edit in YAML**.
-2. Paste the contents of `ha_automation.yaml` from this repo.
-3. Replace `binary_sensor.front_door_person` and `camera.front_door` with
-   **your actual entity IDs**.
-4. Save and enable the automation.
+The Nest integration in HA saves video clips automatically to:
+```
+/config/nest/event_media/
+```
+You do **not** need to set up any automation. Let's confirm this is working:
 
-From now on, every person detection saves a file to
-`/config/www/snapshots/doorbell_YYYYMMDD_HHMMSS.jpg`.
+1. Open the **File editor** add-on (install it from the Add-on Store if you
+   don't have it, or use Samba/SSH to browse files).
+2. Navigate to `config/nest/event_media/`.
+3. You should see subdirectories named after your device ID(s), and inside
+   them `.mp4` clip files — one per detected event.
 
-### Step 3 — Install the add-on
+If the folder is empty or missing, trigger a test:
+- Wave your hand in front of the doorbell, or press the doorbell button.
+- Wait 10 seconds and refresh. A new `.mp4` file should appear.
 
-#### Method A: Samba / SSH file copy (easiest)
+If nothing appears after triggering, check **Settings → Devices & Services →
+Google Nest → Configure** and make sure event subscriptions are enabled.
 
-1. Install the **Samba share** add-on from the HA Add-on Store if you haven't.
-2. On your computer, connect to `\\<ha-ip>\addons` (Windows) or
-   `smb://<ha-ip>/addons` (Mac/Linux).
-3. Create a folder called `babysitter_tracker` inside `addons/`.
-4. Copy **all files from this repo** into that folder.
-   The folder should look like:
+---
+
+## Part 3 — Copy the add-on files to HA (5 minutes)
+
+### Using Samba share (recommended)
+
+1. Install **Samba share** from the HA Add-on Store if you haven't already.
+   Configure it with a username and password, then start it.
+
+2. On your computer, open your file manager and connect to your HA machine:
+   - **Windows**: Open File Explorer → type `\\<your-ha-ip>` in the address
+     bar (e.g. `\\192.168.1.100`) → press Enter → log in with your Samba
+     credentials.
+   - **Mac**: Finder → Go → Connect to Server → type
+     `smb://<your-ha-ip>` → Connect → log in.
+   - **Linux**: File manager → Connect to Server →
+     `smb://<your-ha-ip>/addons`
+
+3. Open the `addons` share. Create a new folder called `babysitter_tracker`.
+
+4. Copy **all files from this repository** into that folder. When done it
+   should look exactly like this:
    ```
-   addons/babysitter_tracker/
-   ├── config.yaml
-   ├── build.yaml
-   ├── Dockerfile
-   ├── run.sh
-   ├── app.py
-   ├── requirements.txt
-   ├── templates/
-   │   └── index.html
-   └── static/
-   ```
-5. In HA go to **Settings → Add-ons → Add-on Store**.
-6. Click the three-dot menu (⋮) in the top right → **Check for updates**.
-7. Scroll down to **Local add-ons** — you should see **Babysitter Tracker**.
-8. Click it → **Install**. HA will build the Docker image (takes ~2 minutes).
+   addons/
+   └── babysitter_tracker/
+       ├── config.yaml          ← required (add-on manifest)
+       ├── build.yaml           ← required (multi-arch build config)
+       ├── Dockerfile           ← required
+       ├── run.sh               ← required
+       ├── app.py               ← required
+       ├── requirements.txt     ← required
+       ├── templates/
+       │   └── index.html       ← required
+       ├── static/              ← required (can be empty folder)
+       ├── .env.example
+       ├── docker-compose.yml
+       ├── ha_automation.yaml
+       └── README.md
+       ```
 
-#### Method B: SSH terminal
+### Using SSH instead
+
+If you prefer the SSH & Web Terminal add-on:
 
 ```bash
-# SSH into your HA instance (requires SSH add-on)
+# In the SSH terminal inside HA:
 mkdir -p /addons/babysitter_tracker
-cd /addons/babysitter_tracker
 
-# Copy files here (use scp or the Samba share)
-# Then reload add-ons:
-ha addons reload
+# Then use scp from your computer to copy the files:
+# (run this on your computer, not in the HA terminal)
+scp -r /path/to/Babysittertracker/* root@<ha-ip>:/addons/babysitter_tracker/
 ```
 
-### Step 4 — Configure the add-on
+---
 
-1. In HA → **Settings → Add-ons → Babysitter Tracker → Configuration** tab.
-2. Fill in:
+## Part 4 — Install the add-on (3 minutes)
 
-| Option | Value | Example |
-|---|---|---|
-| `camera_entity` | Your Nest camera entity ID | `camera.front_door` |
-| `person_sensor` | Your person detection binary sensor | `binary_sensor.front_door_person` |
-| `snapshot_subdir` | Subfolder inside `/share/` for saved images | `babysitter_snapshots` |
-| `timezone` | Your local timezone | `America/New_York` |
+1. In HA go to **Settings → Add-ons**.
+2. Click **Add-on Store** (bottom right).
+3. Click the **⋮ (three-dot menu)** in the top-right corner of the store page.
+4. Click **Check for updates**.
+5. Scroll to the very bottom of the page. You should see a section called
+   **Local add-ons** containing **Babysitter Tracker**.
+6. Click **Babysitter Tracker** → **Install**.
+
+HA will now build the Docker image. This takes **1–3 minutes** depending on
+your hardware. A progress bar will appear — wait for it to complete.
+
+> **Don't see it in Local add-ons?**
+> The `config.yaml` file must be directly inside the `babysitter_tracker`
+> folder (not in a subfolder). Double-check the folder structure from Part 3.
+
+---
+
+## Part 5 — Configure the add-on (2 minutes)
+
+Once installed, **do not start it yet** — configure it first.
+
+1. Click the **Configuration** tab on the add-on page.
+2. Fill in your values from Part 1:
+
+```yaml
+camera_entity: "camera.front_door"         # ← your camera entity ID
+person_sensor: "event.front_door_bell_motion"  # ← your event/motion entity ID
+snapshot_subdir: "nest/event_media"        # ← leave this as-is
+timezone: "America/New_York"               # ← your timezone (see list below)
+```
+
+**Common US timezones:**
+```
+America/New_York       Eastern
+America/Chicago        Central
+America/Denver         Mountain
+America/Los_Angeles    Pacific
+America/Phoenix        Arizona (no DST)
+America/Anchorage      Alaska
+Pacific/Honolulu       Hawaii
+```
 
 3. Click **Save**.
 
-### Step 5 — Start it
+---
 
-1. Go to the **Info** tab → **Start**.
-2. Enable **Start on boot** and **Watchdog** (auto-restart if it crashes).
-3. Click **Open Web UI** — or look for **Babysitter Tracker** in your HA sidebar.
+## Part 6 — Start the add-on
 
-> **Note on snapshots folder:** The add-on saves images to `/share/babysitter_snapshots/`.
-> Your HA automation must also save to that path. Update `ha_automation.yaml`
-> line:
-> ```yaml
-> filename: "/share/babysitter_snapshots/doorbell_{{ now().strftime('%Y%m%d_%H%M%S') }}.jpg"
-> ```
+1. Click the **Info** tab.
+2. Click **Start**.
+3. Toggle on **Start on boot** — this makes the add-on start automatically
+   when HA restarts.
+4. Toggle on **Watchdog** — this restarts the add-on automatically if it
+   crashes.
+5. Click **Open Web UI**.
+
+The app should open. If it doesn't, wait 10 seconds and try again — it takes
+a moment on first launch to scan the clips directory.
+
+You should also see **Babysitter Tracker** appear in your HA sidebar as a
+panel. Click it any time to open the app without leaving HA.
 
 ---
 
-## Deployment Option B — Standalone Docker Compose
+## Part 7 — Using the app
 
-Use this if you run **HA Container** (plain Docker, no Supervisor) or want to
-run the tracker on a separate machine on your network.
+### Browsing clips
 
-### Step 1 — Configure
+The **Snapshots** tab shows video thumbnails from your Nest doorbell, newest
+first, filtered to the current week. Each card shows the time the clip was
+recorded.
 
-```bash
-cp .env.example .env
-```
+- Use the **← →** arrows in the header to navigate between weeks.
+- Use the **Filter by date** box to narrow to a single day.
+- Click **⤢** to open a clip fullscreen with playback controls.
 
-Edit `.env`:
+### Recording a babysitter session
 
-```env
-# Your HA URL and a long-lived access token
-HA_URL=http://192.168.1.100:8123
-HA_TOKEN=your_long_lived_token_here   # see below for how to get this
+1. Find the clip where the babysitter **arrived** at your door.
+2. Click **Arrived** on that card. It turns green and a banner appears at the top.
+3. Find the clip where the babysitter **departed**.
+4. Click **Departed** on that card. It turns orange.
+5. The banner instantly shows the calculated pay preview.
+6. Click **Save Session**. The session is stored with all hours and pay amounts.
 
-# Your entity IDs
-CAMERA_ENTITY=camera.front_door
-PERSON_SENSOR=binary_sensor.front_door_person
+### Viewing weekly pay
 
-# Path on the HOST where HA saves snapshots (mounted into the container)
-SNAPSHOT_DIR=/config/www/snapshots
+- **Sidebar (left)** — always shows the current week's total pay and hour breakdown.
+- **Sessions tab** — lists every saved session with the per-rate breakdown.
+- **Weekly Summary tab** — shows a full table: each day with per-session rows,
+  day totals, and a weekly totals card at the top.
 
-TIMEZONE=America/New_York
-PORT=5050
-```
+### Manual entry (no clip needed)
 
-**Getting a long-lived token:**
-1. In HA, click your username at the bottom-left.
-2. Scroll to **Long-Lived Access Tokens** → **Create Token**.
-3. Name it `babysitter-tracker` and copy the value into `.env` as `HA_TOKEN`.
+If you need to add a session without a clip (e.g. for a past week):
 
-### Step 2 — Set the snapshot volume
-
-Edit `docker-compose.yml` and replace the host path for the snapshots volume:
-
-```yaml
-volumes:
-  - /YOUR/HA/CONFIG/www/snapshots:/config/www/snapshots:ro
-```
-
-Common paths:
-| HA install type | Host path |
-|---|---|
-| HA OS (default) | `/mnt/data/supervisor/homeassistant/www/snapshots` |
-| Docker (`-v /config:/config`) | `/config/www/snapshots` |
-| Manual | Wherever your `configuration.yaml` lives, then `/www/snapshots` |
-
-### Step 3 — Run
-
-```bash
-docker compose up -d
-```
-
-Open **http://your-host:5050**.
-
----
-
-## Connecting to the Nest Camera
-
-The app uses HA's existing Google Nest integration — you don't need a separate
-Nest API key. It reads camera snapshots and person-detection events directly
-from HA.
-
-### Verify the Nest integration is working
-
-1. In HA → **Settings → Devices & Services → Google Nest**.
-2. Your doorbell should be listed. Click it and confirm you see:
-   - A **Camera** entity (live feed)
-   - A **Person** binary sensor
-
-### If person detection isn't showing up
-
-- Make sure your Nest device supports person detection (Nest Doorbell, Nest
-  Hello, or Nest Cam with a Nest Aware subscription).
-- In the Google Home app, confirm motion/person alerts are enabled for the device.
-- In HA, go to **Settings → Devices & Services → Google Nest → Configure** and
-  check that event subscriptions are enabled.
-
-### Automation snapshot path
-
-The automation in `ha_automation.yaml` saves images to a path inside HA's
-config directory. **The app must point to the same directory.**
-
-| Deployment | Automation `filename` | App `SNAPSHOT_DIR` or add-on `snapshot_subdir` |
-|---|---|---|
-| HA Add-on | `/share/babysitter_snapshots/doorbell_...jpg` | `babysitter_snapshots` |
-| Docker | `/config/www/snapshots/doorbell_...jpg` | `/config/www/snapshots` (host path mapped to container) |
+1. Click the **Manual Entry** tab.
+2. Enter the date, arrival time, and departure time.
+3. The estimated pay appears instantly.
+4. Click **Save Session**.
 
 ---
 
 ## Troubleshooting
 
-| Problem | Fix |
+### "No clips found for this period"
+
+The clips directory is empty or the path is wrong.
+
+1. In the add-on **Log** tab, look for:
+   ```
+   [babysitter-tracker] Clips folder: /config/nest/event_media
+   ```
+2. Check that `/config/nest/event_media/` actually exists and contains `.mp4`
+   files (see Part 2).
+3. If your clips are somewhere else, update `snapshot_subdir` in the add-on
+   configuration to match. For example, if they're at
+   `/config/nest/media/`, set `snapshot_subdir: "nest/media"`.
+
+### Add-on won't appear in Local add-ons
+
+- Make sure the folder is named `babysitter_tracker` (no spaces).
+- Make sure `config.yaml` is directly inside that folder.
+- After copying files, go to Add-on Store → ⋮ → **Check for updates** again.
+
+### Add-on fails to build / install
+
+Check the **Log** tab for the error. Common causes:
+
+| Error message | Fix |
 |---|---|
-| No snapshots appear | Check the automation ran: go to **Developer Tools → Events**, listen for `automation_triggered` then walk in front of the camera |
-| "Could not fetch camera snapshot" | Check `CAMERA_ENTITY` matches exactly what HA shows in Developer Tools → States |
-| Add-on won't install | Make sure `config.yaml`, `Dockerfile`, and `run.sh` are all in the add-on folder |
-| Wrong time on sessions | Set `timezone` in add-on config or `.env` to your local timezone (e.g. `America/Chicago`) |
-| HA API errors (401) | For Docker mode, regenerate your long-lived token |
+| `no such file: run.sh` | `run.sh` wasn't copied into the folder |
+| `invalid config.yaml` | Make sure you copied `config.yaml`, not just `README.md` |
+| Build hangs for >5 minutes | Restart HA and try again |
+
+### Wrong timezone / pay calculation is off
+
+The timezone must match your local timezone exactly. Check
+[this list](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)
+for the exact string. Update it in **Configuration → timezone → Save →
+Restart**.
+
+### Clips show but times look wrong
+
+The timestamp comes from the file modification time that HA sets when it saves
+the clip. If clips are old backups that were copied, their modification times
+may be wrong. The app will show whatever time the file was last written.
+
+### HA API errors in the log
+
+The add-on uses HA's built-in Supervisor token automatically — no manual
+token is needed. If you see `401 Unauthorized`:
+
+1. Go to the **Info** tab and **Restart** the add-on.
+2. If it persists, try **Uninstall** → reinstall.
+
+---
+
+## Standalone Docker (alternative to the add-on)
+
+Use this only if you're running **HA Container** (no Supervisor/add-on system)
+or want to run the tracker on a separate machine.
+
+```bash
+# 1. Clone the repo and create your config
+cp .env.example .env
+```
+
+Edit `.env`:
+```env
+HA_URL=http://192.168.1.100:8123        # your HA IP
+HA_TOKEN=your_long_lived_token          # from HA Profile → Long-Lived Access Tokens
+CAMERA_ENTITY=camera.front_door
+PERSON_SENSOR=event.front_door_bell_motion
+SNAPSHOT_DIR=/config/nest/event_media
+TIMEZONE=America/New_York
+PORT=5050
+```
+
+Edit `docker-compose.yml` — update the volume to point to your HA config:
+```yaml
+volumes:
+  - /path/to/your/homeassistant/config:/config:ro
+  - babysitter_data:/data
+```
+
+```bash
+# 2. Start
+docker compose up -d
+
+# 3. Open
+http://<your-machine-ip>:5050
+```
+
+**How to find your HA config path:**
+- HA OS on Raspberry Pi / NUC: typically under
+  `/mnt/data/supervisor/homeassistant`
+- HA Docker with `-v /ha-config:/config`: use `/ha-config`
+- Check: `docker inspect homeassistant | grep Mounts` on your Docker host
 
 ---
 
@@ -240,9 +350,9 @@ config directory. **The app must point to the same directory.**
 ```
 Example: babysitter arrives 8:00 AM, leaves 5:00 PM
 
-  8:00 AM →  9:00 AM  =  1 hr  × $10  =  $10.00   (off-peak)
+  8:00 AM →  9:00 AM  =  1 hr  × $10  =  $10.00   (off-peak, before 9am)
   9:00 AM →  3:00 PM  =  6 hrs × $16  =  $96.00   (peak)
-  3:00 PM →  5:00 PM  =  2 hrs × $10  =  $20.00   (off-peak)
+  3:00 PM →  5:00 PM  =  2 hrs × $10  =  $20.00   (off-peak, after 3pm)
                                         ─────────
   Total:  9 hours                       $126.00
 ```
