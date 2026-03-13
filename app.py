@@ -1,685 +1,402 @@
-import os
-import re
 import json
+import os
 import sqlite3
-from datetime import datetime, timedelta, date
+import subprocess
+import hashlib
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import requests
-from flask import Flask, render_template, request, jsonify, Response, send_from_directory
-from dotenv import load_dotenv
-
-load_dotenv()
+from flask import (
+    Flask,
+    Response,
+    jsonify,
+    render_template,
+    request,
+    send_file,
+    abort,
+)
 
 app = Flask(__name__)
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-# When running as an HA add-on, SUPERVISOR_TOKEN is injected automatically
-# and the API is reachable at http://supervisor/core.
-# For standalone Docker / direct use, set HA_URL + HA_TOKEN in your .env.
-HA_URL = os.getenv("HA_URL", "http://supervisor/core").rstrip("/")
-HA_TOKEN = os.getenv("HA_TOKEN") or os.getenv("SUPERVISOR_TOKEN", "")
-# Nest integration saves clips automatically to /config/nest/event_media —
-# no separate automation needed.
-SNAPSHOT_DIR = os.getenv("SNAPSHOT_DIR", "/config/nest/event_media")
-CAMERA_ENTITY = os.getenv("CAMERA_ENTITY", "camera.doorbell")
-PERSON_SENSOR = os.getenv("PERSON_SENSOR", "binary_sensor.doorbell_person")
-DB_PATH = os.getenv("DB_PATH", "babysitter.db")
-TZ_NAME = os.getenv("TIMEZONE", "America/New_York")
 
-# Pay rates
-PEAK_START_HOUR = 9   # 9:00 AM inclusive
-PEAK_END_HOUR = 15    # 3:00 PM exclusive (i.e. up to 14:59)
-PEAK_RATE = 16.0      # $/hr
-OFF_PEAK_RATE = 10.0  # $/hr
+OPTIONS_FILE = "/data/options.json"
+DATA_DIR = Path("/data")
+DB_PATH = DATA_DIR / "sessions.db"
+THUMBS_DIR = DATA_DIR / "thumbs"
+THUMBS_DIR.mkdir(parents=True, exist_ok=True)
+
+RATE_PEAK = 16.0
+RATE_OFFPEAK = 10.0
+PEAK_START = 9   # 9 AM (inclusive)
+PEAK_END = 15    # 3 PM (exclusive)
+
+
+def get_config() -> dict:
+    if OPTIONS_FILE and Path(OPTIONS_FILE).exists():
+        with open(OPTIONS_FILE) as f:
+            return json.load(f)
+    return {
+        "camera_entity": os.getenv("CAMERA_ENTITY", "camera.front_door"),
+        "person_sensor": os.getenv("PERSON_SENSOR", "event.front_door_bell_motion"),
+        "snapshot_subdir": os.getenv("SNAPSHOT_DIR", "nest/event_media"),
+        "timezone": os.getenv("TIMEZONE", "America/New_York"),
+    }
+
+
+def get_tz():
+    return ZoneInfo(get_config().get("timezone", "America/New_York"))
+
+
+def clips_dir() -> Path:
+    subdir = get_config().get("snapshot_subdir", "nest/event_media")
+    return Path("/config") / subdir
+
 
 # ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
-def get_db():
-    db = sqlite3.connect(DB_PATH)
-    db.row_factory = sqlite3.Row
-    return db
-
 
 def init_db():
-    with get_db() as db:
-        db.executescript("""
-            CREATE TABLE IF NOT EXISTS sessions (
-                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_date       TEXT NOT NULL,
-                arrival_time       TEXT,
-                departure_time     TEXT,
-                arrival_snapshot   TEXT,
-                departure_snapshot TEXT,
-                notes              TEXT,
-                -- stored computed values so weekly totals need no recalculation
-                total_hours        REAL DEFAULT 0,
-                peak_hours         REAL DEFAULT 0,
-                off_peak_hours     REAL DEFAULT 0,
-                peak_pay           REAL DEFAULT 0,
-                off_peak_pay       REAL DEFAULT 0,
-                total_pay          REAL DEFAULT 0,
-                created_at         TEXT DEFAULT (datetime('now'))
-            );
-
-            CREATE TABLE IF NOT EXISTS snapshots (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                filename   TEXT UNIQUE NOT NULL,
-                ts         TEXT NOT NULL,
-                source     TEXT DEFAULT 'file',
-                media_type TEXT DEFAULT 'image'
-            );
-        """)
-
-        # Migrate existing DBs that predate the pay columns
-        existing = {row[1] for row in db.execute("PRAGMA table_info(sessions)")}
-        for col, typ in [
-            ("total_hours",    "REAL DEFAULT 0"),
-            ("peak_hours",     "REAL DEFAULT 0"),
-            ("off_peak_hours", "REAL DEFAULT 0"),
-            ("peak_pay",       "REAL DEFAULT 0"),
-            ("off_peak_pay",   "REAL DEFAULT 0"),
-            ("total_pay",      "REAL DEFAULT 0"),
-        ]:
-            if col not in existing:
-                db.execute(f"ALTER TABLE sessions ADD COLUMN {col} {typ}")
-
-        # Back-fill any rows that have times but zero pay (from before migration)
-        db.execute("""
-            UPDATE sessions SET total_hours = 0, peak_hours = 0, off_peak_hours = 0,
-                peak_pay = 0, off_peak_pay = 0, total_pay = 0
-            WHERE total_hours IS NULL
-        """)
-
-        # Migrate snapshots table: add media_type if missing
-        snap_cols = {row[1] for row in db.execute("PRAGMA table_info(snapshots)")}
-        if "media_type" not in snap_cols:
-            db.execute("ALTER TABLE snapshots ADD COLUMN media_type TEXT DEFAULT 'image'")
-
-
-init_db()
-
-# ---------------------------------------------------------------------------
-# Helpers: timezone
-# ---------------------------------------------------------------------------
-def local_tz():
-    try:
-        return ZoneInfo(TZ_NAME)
-    except Exception:
-        return ZoneInfo("UTC")
-
-
-def now_local():
-    return datetime.now(tz=local_tz())
-
-
-# ---------------------------------------------------------------------------
-# Helpers: snapshot discovery
-# ---------------------------------------------------------------------------
-TIMESTAMP_PATTERNS = [
-    # snapshot_2024-01-15_14-30-00.jpg  or  snapshot_2024-01-15T14:30:00.jpg
-    re.compile(r"(\d{4})[-_](\d{2})[-_](\d{2})[T_](\d{2})[-:](\d{2})[-:](\d{2})"),
-    # doorbell_20240115_143000
-    re.compile(r"(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})"),
-]
-
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv"}
-
-
-def parse_ts_from_filename(name: str):
-    for pat in TIMESTAMP_PATTERNS:
-        m = pat.search(name)
-        if m:
-            g = m.groups()
-            try:
-                return datetime(
-                    int(g[0]), int(g[1]), int(g[2]),
-                    int(g[3]), int(g[4]), int(g[5]),
-                    tzinfo=local_tz(),
-                )
-            except ValueError:
-                pass
-    return None
-
-
-def scan_snapshots():
-    """
-    Recursively scan SNAPSHOT_DIR for images and videos and upsert into the DB.
-
-    The Nest integration stores clips under /config/nest/event_media/ in a
-    nested structure (device_id/YYYY/MM/DD/<uuid>.mp4 or similar), so we walk
-    the whole tree with rglob.  Filenames are stored as paths relative to
-    SNAPSHOT_DIR so they stay portable across remounts.
-    """
-    snap_root = Path(SNAPSHOT_DIR)
-    if not snap_root.exists():
-        return
-
-    with get_db() as db:
-        for f in snap_root.rglob("*"):
-            if not f.is_file():
-                continue
-            ext = f.suffix.lower()
-            if ext in IMAGE_EXTENSIONS:
-                media_type = "image"
-            elif ext in VIDEO_EXTENSIONS:
-                media_type = "video"
-            else:
-                continue
-
-            ts = parse_ts_from_filename(f.name)
-            if ts is None:
-                mtime = f.stat().st_mtime
-                ts = datetime.fromtimestamp(mtime, tz=local_tz())
-
-            # Store relative path so the DB is portable between mounts
-            rel = str(f.relative_to(snap_root))
-            db.execute(
-                """INSERT OR IGNORE INTO snapshots (filename, ts, source, media_type)
-                   VALUES (?, ?, 'file', ?)""",
-                (rel, ts.isoformat(), media_type),
-            )
-
-
-def ha_headers():
-    return {
-        "Authorization": f"Bearer {HA_TOKEN}",
-        "Content-Type": "application/json",
-    }
-
-
-def fetch_ha_person_events(days_back: int = 14):
-    """
-    Query HA history API for motion/person events and cache them as synthetic
-    snapshots (source='ha_event').
-
-    Supports two entity types used by the Google Nest integration:
-      - binary_sensor.*  (older integration) — only records state == "on"
-      - event.*          (newer integration) — every state change is an event;
-                         state value is a timestamp string, not "on"/"off"
-    """
-    if not HA_TOKEN:
-        return
-    start = now_local() - timedelta(days=days_back)
-    url = f"{HA_URL}/api/history/period/{start.isoformat()}"
-    params = {"filter_entity_id": PERSON_SENSOR, "minimal_response": "true"}
-    try:
-        resp = requests.get(url, headers=ha_headers(), params=params, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception:
-        return
-
-    if not data or not data[0]:
-        return
-
-    is_binary_sensor = PERSON_SENSOR.startswith("binary_sensor.")
-
-    with get_db() as db:
-        for entry in data[0]:
-            state = entry.get("state", "")
-
-            if is_binary_sensor:
-                # binary_sensor: only care about the "on" (detected) transition
-                if state != "on":
-                    continue
-            else:
-                # event entity: state is a timestamp string on each new event;
-                # skip non-event states like "unavailable" / "unknown" / ""
-                if state in ("unavailable", "unknown", "none", ""):
-                    continue
-
-            last_changed = entry.get("last_changed") or entry.get("last_updated")
-            if not last_changed:
-                continue
-            try:
-                ts = datetime.fromisoformat(last_changed.replace("Z", "+00:00"))
-                ts = ts.astimezone(local_tz())
-            except ValueError:
-                continue
-
-            fake_filename = f"ha_event_{ts.strftime('%Y%m%d_%H%M%S')}.jpg"
-            db.execute(
-                "INSERT OR IGNORE INTO snapshots (filename, ts, source) VALUES (?, ?, 'ha_event')",
-                (fake_filename, ts.isoformat()),
-            )
-
-
-# ---------------------------------------------------------------------------
-# Helpers: pay calculation
-# ---------------------------------------------------------------------------
-def calculate_pay(arrival: datetime, departure: datetime) -> dict:
-    if departure <= arrival:
-        return {
-            "total_hours": 0, "peak_hours": 0, "off_peak_hours": 0,
-            "peak_pay": 0, "off_peak_pay": 0, "total_pay": 0,
-        }
-
-    # Build peak window for the same day as arrival
-    peak_start = arrival.replace(hour=PEAK_START_HOUR, minute=0, second=0, microsecond=0)
-    peak_end = arrival.replace(hour=PEAK_END_HOUR, minute=0, second=0, microsecond=0)
-
-    def secs(a, b) -> float:
-        delta = b - a
-        return max(0.0, delta.total_seconds())
-
-    # Segment 1: arrival → peak_start  (off-peak)
-    seg1 = secs(arrival, min(peak_start, departure))
-    # Segment 2: peak_start → peak_end  (peak)
-    seg2 = secs(max(arrival, peak_start), min(departure, peak_end))
-    # Segment 3: peak_end → departure  (off-peak)
-    seg3 = secs(max(arrival, peak_end), departure)
-
-    off_peak_hours = (seg1 + seg3) / 3600.0
-    peak_hours = seg2 / 3600.0
-    total_hours = off_peak_hours + peak_hours
-
-    return {
-        "total_hours": round(total_hours, 4),
-        "peak_hours": round(peak_hours, 4),
-        "off_peak_hours": round(off_peak_hours, 4),
-        "peak_pay": round(peak_hours * PEAK_RATE, 2),
-        "off_peak_pay": round(off_peak_hours * OFF_PEAK_RATE, 2),
-        "total_pay": round(peak_hours * PEAK_RATE + off_peak_hours * OFF_PEAK_RATE, 2),
-    }
-
-
-def _persist_pay(session_id: int, pay: dict):
-    """Write computed pay columns back to a session row."""
-    with get_db() as db:
-        db.execute(
-            """UPDATE sessions SET
-                total_hours    = ?,
-                peak_hours     = ?,
-                off_peak_hours = ?,
-                peak_pay       = ?,
-                off_peak_pay   = ?,
-                total_pay      = ?
-               WHERE id = ?""",
-            (
-                pay["total_hours"],
-                pay["peak_hours"],
-                pay["off_peak_hours"],
-                pay["peak_pay"],
-                pay["off_peak_pay"],
-                pay["total_pay"],
-                session_id,
-            ),
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            date         TEXT    NOT NULL,
+            arrived      TEXT    NOT NULL,
+            departed     TEXT    NOT NULL,
+            arrived_clip TEXT,
+            departed_clip TEXT,
+            hours_total  REAL    NOT NULL,
+            hours_peak   REAL    NOT NULL,
+            hours_offpeak REAL   NOT NULL,
+            pay_peak     REAL    NOT NULL,
+            pay_offpeak  REAL    NOT NULL,
+            pay_total    REAL    NOT NULL,
+            created_at   TEXT    NOT NULL
         )
+    """)
+    conn.commit()
+    conn.close()
 
 
-def week_bounds(iso_week_str: str):
-    """Return (monday, sunday) date objects for a given 'YYYY-Www' string."""
-    year, week = iso_week_str.split("-W")
-    monday = date.fromisocalendar(int(year), int(week), 1)
-    sunday = monday + timedelta(days=6)
-    return monday, sunday
+def db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 # ---------------------------------------------------------------------------
-# Routes: pages
+# Pay calculation
 # ---------------------------------------------------------------------------
+
+def calculate_pay(arrived_dt: datetime, departed_dt: datetime) -> dict:
+    """Split a session at 9 AM and 3 PM boundaries and compute pay."""
+    def same_day_boundary(dt, hour):
+        return dt.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+    boundaries = [
+        same_day_boundary(arrived_dt, PEAK_START),
+        same_day_boundary(arrived_dt, PEAK_END),
+    ]
+    points = sorted(
+        {arrived_dt, departed_dt} | {b for b in boundaries if arrived_dt < b < departed_dt}
+    )
+
+    hours_peak = 0.0
+    hours_offpeak = 0.0
+
+    for start, end in zip(points, points[1:]):
+        seg_hours = (end - start).total_seconds() / 3600
+        hour_frac = start.hour + start.minute / 60
+        if PEAK_START <= hour_frac < PEAK_END:
+            hours_peak += seg_hours
+        else:
+            hours_offpeak += seg_hours
+
+    return {
+        "hours_total": round(hours_peak + hours_offpeak, 4),
+        "hours_peak": round(hours_peak, 4),
+        "hours_offpeak": round(hours_offpeak, 4),
+        "pay_peak": round(hours_peak * RATE_PEAK, 2),
+        "pay_offpeak": round(hours_offpeak * RATE_OFFPEAK, 2),
+        "pay_total": round(hours_peak * RATE_PEAK + hours_offpeak * RATE_OFFPEAK, 2),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Clip scanning
+# ---------------------------------------------------------------------------
+
+def week_bounds(week_str: str | None, tz) -> tuple[datetime, datetime]:
+    """Return (Monday 00:00, Sunday 23:59:59) for the given ISO week string."""
+    if week_str:
+        year, week = map(int, week_str.split("-W"))
+        monday = datetime.fromisocalendar(year, week, 1)
+    else:
+        today = datetime.now(tz).date()
+        monday = today - timedelta(days=today.weekday())
+    start = datetime(monday.year, monday.month, monday.day, tzinfo=tz)
+    end = start + timedelta(days=7) - timedelta(seconds=1)
+    return start, end
+
+
+def scan_clips(week_str: str | None = None, date_str: str | None = None) -> list[dict]:
+    tz = get_tz()
+    base = clips_dir()
+    if not base.exists():
+        return []
+
+    start, end = week_bounds(week_str, tz)
+    results = []
+
+    for path in sorted(base.rglob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True):
+        mtime = path.stat().st_mtime
+        clip_dt = datetime.fromtimestamp(mtime, tz=tz)
+
+        if not (start <= clip_dt <= end):
+            continue
+        if date_str and clip_dt.strftime("%Y-%m-%d") != date_str:
+            continue
+
+        rel = str(path.relative_to(base))
+        results.append({
+            "path": rel,
+            "datetime": clip_dt.isoformat(),
+            "date": clip_dt.strftime("%Y-%m-%d"),
+            "time": clip_dt.strftime("%I:%M %p"),
+            "time24": clip_dt.strftime("%H:%M"),
+            "ts": int(mtime),
+        })
+
+    return results
+
+
+def thumb_path_for(rel: str) -> Path:
+    key = hashlib.md5(rel.encode()).hexdigest()
+    return THUMBS_DIR / f"{key}.jpg"
+
+
+def ensure_thumb(rel: str) -> Path | None:
+    tp = thumb_path_for(rel)
+    if tp.exists():
+        return tp
+    src = clips_dir() / rel
+    if not src.exists():
+        return None
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-ss", "1",
+                "-i", str(src),
+                "-frames:v", "1",
+                "-q:v", "3",
+                "-vf", "scale=320:-1",
+                str(tp),
+            ],
+            capture_output=True,
+            timeout=15,
+        )
+        return tp if tp.exists() else None
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Routes — UI
+# ---------------------------------------------------------------------------
+
 @app.route("/")
 def index():
-    return render_template("index.html",
-                           camera_entity=CAMERA_ENTITY,
-                           ha_url=HA_URL)
+    return render_template("index.html")
 
 
 # ---------------------------------------------------------------------------
-# Routes: snapshots API
+# Routes — clips
 # ---------------------------------------------------------------------------
-@app.route("/api/snapshots/refresh", methods=["POST"])
-def refresh_snapshots():
-    scan_snapshots()
-    fetch_ha_person_events()
-    return jsonify({"ok": True})
+
+@app.route("/api/clips")
+def api_clips():
+    week = request.args.get("week")
+    date = request.args.get("date")
+    return jsonify(scan_clips(week, date))
 
 
-@app.route("/api/snapshots")
-def list_snapshots():
-    scan_snapshots()
-    date_filter = request.args.get("date")   # YYYY-MM-DD
-    week_filter = request.args.get("week")   # YYYY-Www
+@app.route("/api/clips/weeks")
+def api_clips_weeks():
+    """Return list of ISO week strings that have clips."""
+    tz = get_tz()
+    base = clips_dir()
+    weeks = set()
+    if base.exists():
+        for path in base.rglob("*.mp4"):
+            dt = datetime.fromtimestamp(path.stat().st_mtime, tz=tz)
+            weeks.add(dt.strftime("%Y-W%V"))
+    return jsonify(sorted(weeks, reverse=True))
 
-    query = "SELECT id, filename, ts, source, media_type FROM snapshots"
-    params = []
 
-    conditions = []
-    if date_filter:
-        conditions.append("date(ts) = ?")
-        params.append(date_filter)
-    elif week_filter:
-        try:
-            monday, sunday = week_bounds(week_filter)
-            conditions.append("date(ts) BETWEEN ? AND ?")
-            params += [monday.isoformat(), sunday.isoformat()]
-        except (ValueError, AttributeError):
-            pass
+@app.route("/video/<path:rel>")
+def serve_video(rel):
+    src = clips_dir() / rel
+    if not src.exists() or not src.is_file():
+        abort(404)
+    # Prevent path traversal
+    try:
+        src.relative_to(clips_dir())
+    except ValueError:
+        abort(403)
+    return send_file(src, mimetype="video/mp4", conditional=True)
 
-    if conditions:
-        query += " WHERE " + " AND ".join(conditions)
-    query += " ORDER BY ts DESC"
 
-    with get_db() as db:
-        rows = db.execute(query, params).fetchall()
+@app.route("/thumb/<path:rel>")
+def serve_thumb(rel):
+    tp = ensure_thumb(rel)
+    if tp is None:
+        abort(404)
+    return send_file(tp, mimetype="image/jpeg")
 
+
+# ---------------------------------------------------------------------------
+# Routes — pay preview
+# ---------------------------------------------------------------------------
+
+@app.route("/api/preview")
+def api_preview():
+    tz = get_tz()
+    arrived = request.args.get("arrived")   # ISO datetime string
+    departed = request.args.get("departed")
+    if not arrived or not departed:
+        return jsonify({"error": "arrived and departed required"}), 400
+    try:
+        a = datetime.fromisoformat(arrived).replace(tzinfo=tz)
+        d = datetime.fromisoformat(departed).replace(tzinfo=tz)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    if d <= a:
+        return jsonify({"error": "departed must be after arrived"}), 400
+    return jsonify(calculate_pay(a, d))
+
+
+# ---------------------------------------------------------------------------
+# Routes — sessions
+# ---------------------------------------------------------------------------
+
+@app.route("/api/sessions", methods=["GET"])
+def api_sessions_list():
+    week = request.args.get("week")
+    tz = get_tz()
+    start, end = week_bounds(week, tz)
+
+    conn = db()
+    rows = conn.execute(
+        "SELECT * FROM sessions WHERE date >= ? AND date <= ? ORDER BY arrived DESC",
+        (start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")),
+    ).fetchall()
+    conn.close()
     return jsonify([dict(r) for r in rows])
 
 
-def _safe_file_path(filename: str) -> Path:
-    """Resolve filename relative to SNAPSHOT_DIR and guard against path traversal."""
-    root = Path(SNAPSHOT_DIR).resolve()
-    candidate = (root / filename).resolve()
-    if not str(candidate).startswith(str(root)):
-        raise ValueError("Path traversal attempt")
-    return candidate
-
-
-@app.route("/api/snapshots/<int:snap_id>/image")
-def snapshot_image(snap_id: int):
-    """Serve a JPEG thumbnail for any snapshot (image or video)."""
-    with get_db() as db:
-        row = db.execute(
-            "SELECT filename, source, media_type FROM snapshots WHERE id = ?", (snap_id,)
-        ).fetchone()
-
-    if not row:
-        return ("Not found", 404)
-
-    filename   = row["filename"]
-    source     = row["source"]
-    media_type = row["media_type"] or "image"
-
-    if source == "file":
-        try:
-            file_path = _safe_file_path(filename)
-        except ValueError:
-            return ("Forbidden", 403)
-
-        if media_type == "video":
-            # HA Nest saves a thumbnail.jpg alongside each clip in the same dir
-            for thumb_name in (
-                file_path.stem + ".jpg",       # same name, .jpg extension
-                file_path.stem + ".jpeg",
-                "thumbnail.jpg",               # generic sibling thumbnail
-            ):
-                thumb = file_path.parent / thumb_name
-                if thumb.exists():
-                    return send_file(thumb, mimetype="image/jpeg")
-            # No thumbnail found — tell the frontend to show a video element
-            return ("no-thumbnail", 204)
-
-        if not file_path.is_file():
-            return ("Not found", 404)
-        return send_file(file_path)
-
-    # ha_event source: proxy the live camera frame (best-effort)
-    if not HA_TOKEN:
-        return ("No HA token configured", 503)
-    try:
-        url = f"{HA_URL}/api/camera_proxy/{CAMERA_ENTITY}"
-        r = requests.get(url, headers=ha_headers(), timeout=10, stream=True)
-        r.raise_for_status()
-        return Response(r.content, content_type=r.headers.get("Content-Type", "image/jpeg"))
-    except Exception as exc:
-        return (f"Could not fetch camera snapshot: {exc}", 502)
-
-
-@app.route("/api/snapshots/<int:snap_id>/video")
-def snapshot_video(snap_id: int):
-    """Stream the raw video file for a video snapshot."""
-    with get_db() as db:
-        row = db.execute(
-            "SELECT filename, source, media_type FROM snapshots WHERE id = ?", (snap_id,)
-        ).fetchone()
-
-    if not row or (row["media_type"] or "image") != "video":
-        return ("Not a video", 404)
-
-    try:
-        file_path = _safe_file_path(row["filename"])
-    except ValueError:
-        return ("Forbidden", 403)
-
-    if not file_path.is_file():
-        return ("Not found", 404)
-
-    ext = file_path.suffix.lower()
-    mime = "video/quicktime" if ext == ".mov" else "video/mp4"
-    return send_file(file_path, mimetype=mime)
-
-
-# ---------------------------------------------------------------------------
-# Routes: sessions API
-# ---------------------------------------------------------------------------
-@app.route("/api/sessions", methods=["GET"])
-def list_sessions():
-    week_filter = request.args.get("week")
-    query = "SELECT * FROM sessions"
-    params = []
-    if week_filter:
-        try:
-            monday, sunday = week_bounds(week_filter)
-            query += " WHERE session_date BETWEEN ? AND ?"
-            params = [monday.isoformat(), sunday.isoformat()]
-        except (ValueError, AttributeError):
-            pass
-    query += " ORDER BY session_date ASC, arrival_time ASC"
-
-    with get_db() as db:
-        rows = db.execute(query, params).fetchall()
-
-    sessions = []
-    for r in rows:
-        s = dict(r)
-        # Return stored pay values; embed as nested dict for frontend compatibility
-        if s.get("arrival_time") and s.get("departure_time") and s.get("total_pay", 0):
-            s["pay"] = {
-                "total_hours":    s["total_hours"],
-                "peak_hours":     s["peak_hours"],
-                "off_peak_hours": s["off_peak_hours"],
-                "peak_pay":       s["peak_pay"],
-                "off_peak_pay":   s["off_peak_pay"],
-                "total_pay":      s["total_pay"],
-            }
-        elif s.get("arrival_time") and s.get("departure_time"):
-            # Row exists but pay cols are 0 (e.g. migrated row) — compute & patch
-            arr = datetime.fromisoformat(s["arrival_time"]).replace(tzinfo=local_tz())
-            dep = datetime.fromisoformat(s["departure_time"]).replace(tzinfo=local_tz())
-            pay = calculate_pay(arr, dep)
-            _persist_pay(s["id"], pay)
-            s.update(pay)
-            s["pay"] = pay
-        else:
-            s["pay"] = None
-        sessions.append(s)
-    return jsonify(sessions)
-
-
 @app.route("/api/sessions", methods=["POST"])
-def create_session():
-    body = request.get_json(force=True)
-    required = ("session_date", "arrival_time", "departure_time")
-    if not all(body.get(k) for k in required):
-        return jsonify({"error": "session_date, arrival_time, departure_time are required"}), 400
+def api_sessions_create():
+    data = request.json
+    tz = get_tz()
+    required = ("arrived", "departed")
+    for field in required:
+        if not data.get(field):
+            return jsonify({"error": f"{field} is required"}), 400
 
-    arr = datetime.fromisoformat(body["arrival_time"]).replace(tzinfo=local_tz())
-    dep = datetime.fromisoformat(body["departure_time"]).replace(tzinfo=local_tz())
-    pay = calculate_pay(arr, dep)
+    try:
+        a = datetime.fromisoformat(data["arrived"]).replace(tzinfo=tz)
+        d = datetime.fromisoformat(data["departed"]).replace(tzinfo=tz)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
-    with get_db() as db:
-        cur = db.execute(
-            """INSERT INTO sessions
-               (session_date, arrival_time, departure_time,
-                arrival_snapshot, departure_snapshot, notes,
-                total_hours, peak_hours, off_peak_hours,
-                peak_pay, off_peak_pay, total_pay)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                body["session_date"],
-                body["arrival_time"],
-                body["departure_time"],
-                body.get("arrival_snapshot"),
-                body.get("departure_snapshot"),
-                body.get("notes", ""),
-                pay["total_hours"],
-                pay["peak_hours"],
-                pay["off_peak_hours"],
-                pay["peak_pay"],
-                pay["off_peak_pay"],
-                pay["total_pay"],
-            ),
-        )
-        session_id = cur.lastrowid
+    if d <= a:
+        return jsonify({"error": "departed must be after arrived"}), 400
 
-    return jsonify({"ok": True, "id": session_id, "pay": pay}), 201
-
-
-@app.route("/api/sessions/<int:session_id>", methods=["PUT"])
-def update_session(session_id: int):
-    body = request.get_json(force=True)
-    fields = ["session_date", "arrival_time", "departure_time",
-              "arrival_snapshot", "departure_snapshot", "notes"]
-    updates = {k: body[k] for k in fields if k in body}
-    if not updates:
-        return jsonify({"error": "Nothing to update"}), 400
-
-    # If times changed, recalculate and store pay
-    if "arrival_time" in updates or "departure_time" in updates:
-        with get_db() as db:
-            row = db.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
-        if row:
-            arr_str = updates.get("arrival_time")   or row["arrival_time"]
-            dep_str = updates.get("departure_time") or row["departure_time"]
-            if arr_str and dep_str:
-                arr = datetime.fromisoformat(arr_str).replace(tzinfo=local_tz())
-                dep = datetime.fromisoformat(dep_str).replace(tzinfo=local_tz())
-                pay = calculate_pay(arr, dep)
-                updates.update({
-                    "total_hours":    pay["total_hours"],
-                    "peak_hours":     pay["peak_hours"],
-                    "off_peak_hours": pay["off_peak_hours"],
-                    "peak_pay":       pay["peak_pay"],
-                    "off_peak_pay":   pay["off_peak_pay"],
-                    "total_pay":      pay["total_pay"],
-                })
-
-    set_clause = ", ".join(f"{k} = ?" for k in updates)
-    params = list(updates.values()) + [session_id]
-
-    with get_db() as db:
-        db.execute(f"UPDATE sessions SET {set_clause} WHERE id = ?", params)
-
-    return jsonify({"ok": True})
+    pay = calculate_pay(a, d)
+    conn = db()
+    cur = conn.execute(
+        """INSERT INTO sessions
+           (date, arrived, departed, arrived_clip, departed_clip,
+            hours_total, hours_peak, hours_offpeak,
+            pay_peak, pay_offpeak, pay_total, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            a.strftime("%Y-%m-%d"),
+            a.isoformat(),
+            d.isoformat(),
+            data.get("arrived_clip"),
+            data.get("departed_clip"),
+            pay["hours_total"],
+            pay["hours_peak"],
+            pay["hours_offpeak"],
+            pay["pay_peak"],
+            pay["pay_offpeak"],
+            pay["pay_total"],
+            datetime.now(tz).isoformat(),
+        ),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM sessions WHERE id=?", (cur.lastrowid,)).fetchone()
+    conn.close()
+    return jsonify(dict(row)), 201
 
 
 @app.route("/api/sessions/<int:session_id>", methods=["DELETE"])
-def delete_session(session_id: int):
-    with get_db() as db:
-        db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-    return jsonify({"ok": True})
+def api_sessions_delete(session_id):
+    conn = db()
+    conn.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+    conn.commit()
+    conn.close()
+    return "", 204
 
 
 # ---------------------------------------------------------------------------
-# Routes: weekly summary
+# Routes — weekly summary
 # ---------------------------------------------------------------------------
-@app.route("/api/summary/week/<week>")
-def weekly_summary(week: str):
-    try:
-        monday, sunday = week_bounds(week)
-    except (ValueError, AttributeError):
-        return jsonify({"error": "Invalid week format, use YYYY-Www"}), 400
 
-    with get_db() as db:
-        # Per-session rows (for the day breakdown)
-        rows = db.execute(
-            """SELECT * FROM sessions
-               WHERE session_date BETWEEN ? AND ?
-               ORDER BY session_date ASC, arrival_time ASC""",
-            (monday.isoformat(), sunday.isoformat()),
-        ).fetchall()
+@app.route("/api/weekly-summary")
+def api_weekly_summary():
+    week = request.args.get("week")
+    tz = get_tz()
+    start, end = week_bounds(week, tz)
 
-        # Per-day aggregates — stored values, pure SQL sum
-        day_rows = db.execute(
-            """SELECT
-                 session_date,
-                 COUNT(*)                    AS session_count,
-                 ROUND(SUM(total_hours),    4) AS total_hours,
-                 ROUND(SUM(peak_hours),     4) AS peak_hours,
-                 ROUND(SUM(off_peak_hours), 4) AS off_peak_hours,
-                 ROUND(SUM(peak_pay),       2) AS peak_pay,
-                 ROUND(SUM(off_peak_pay),   2) AS off_peak_pay,
-                 ROUND(SUM(total_pay),      2) AS total_pay
-               FROM sessions
-               WHERE session_date BETWEEN ? AND ?
-               GROUP BY session_date
-               ORDER BY session_date ASC""",
-            (monday.isoformat(), sunday.isoformat()),
-        ).fetchall()
+    conn = db()
+    rows = conn.execute(
+        "SELECT * FROM sessions WHERE date >= ? AND date <= ? ORDER BY arrived",
+        (start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")),
+    ).fetchall()
+    conn.close()
 
-        # Weekly totals — pure SQL, no Python arithmetic
-        week_row = db.execute(
-            """SELECT
-                 ROUND(SUM(total_hours),    4) AS total_hours,
-                 ROUND(SUM(peak_hours),     4) AS peak_hours,
-                 ROUND(SUM(off_peak_hours), 4) AS off_peak_hours,
-                 ROUND(SUM(peak_pay),       2) AS peak_pay,
-                 ROUND(SUM(off_peak_pay),   2) AS off_peak_pay,
-                 ROUND(SUM(total_pay),      2) AS total_pay
-               FROM sessions
-               WHERE session_date BETWEEN ? AND ?""",
-            (monday.isoformat(), sunday.isoformat()),
-        ).fetchone()
+    by_date: dict[str, list] = {}
+    totals = {"hours_total": 0.0, "hours_peak": 0.0, "hours_offpeak": 0.0,
+               "pay_peak": 0.0, "pay_offpeak": 0.0, "pay_total": 0.0}
 
-    # Shape sessions into per-day buckets
-    days = {}
     for r in rows:
-        s = dict(r)
-        s["pay"] = {
-            "total_hours":    s["total_hours"],
-            "peak_hours":     s["peak_hours"],
-            "off_peak_hours": s["off_peak_hours"],
-            "peak_pay":       s["peak_pay"],
-            "off_peak_pay":   s["off_peak_pay"],
-            "total_pay":      s["total_pay"],
-        } if s.get("total_pay") else None
-        days.setdefault(s["session_date"], []).append(s)
+        d = r["date"]
+        by_date.setdefault(d, []).append(dict(r))
+        for k in totals:
+            totals[k] += r[k]
 
-    day_totals = [dict(d) for d in day_rows]
+    for k in totals:
+        totals[k] = round(totals[k], 2)
 
-    totals = dict(week_row) if week_row else {
-        "total_hours": 0, "peak_hours": 0, "off_peak_hours": 0,
-        "peak_pay": 0, "off_peak_pay": 0, "total_pay": 0,
-    }
-    # Replace None (empty week) with zeros
-    totals = {k: (v or 0) for k, v in totals.items()}
-
-    return jsonify({
-        "week":       week,
-        "monday":     monday.isoformat(),
-        "sunday":     sunday.isoformat(),
-        "days":       days,
-        "day_totals": day_totals,   # list of per-day aggregate rows
-        "totals":     totals,       # single week aggregate
-    })
+    return jsonify({"by_date": by_date, "totals": totals,
+                    "week": week or datetime.now(tz).strftime("%Y-W%V")})
 
 
 # ---------------------------------------------------------------------------
-# Routes: current week helper
+# Startup
 # ---------------------------------------------------------------------------
-@app.route("/api/current_week")
-def current_week():
-    today = now_local().date()
-    iso = today.isocalendar()
-    return jsonify({"week": f"{iso.year}-W{iso.week:02d}", "today": today.isoformat()})
-
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=os.getenv("FLASK_DEBUG", "0") == "1")
+    init_db()
+    cfg = get_config()
+    print(f"[babysitter-tracker] Clips folder: {clips_dir()}")
+    print(f"[babysitter-tracker] Timezone: {cfg.get('timezone')}")
+    app.run(host="0.0.0.0", port=8099, debug=False)

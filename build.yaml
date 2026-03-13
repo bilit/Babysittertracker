@@ -1,7 +1,4 @@
-# Tells the HA build system which base image to use per architecture.
-# These are the official HA Python 3.12 base images.
-build_from:
-  aarch64: ghcr.io/home-assistant/aarch64-base-python:3.12
-  amd64:   ghcr.io/home-assistant/amd64-base-python:3.12
-  armhf:   ghcr.io/home-assistant/armhf-base-python:3.12
-  armv7:   ghcr.io/home-assistant/armv7-base-python:3.12
+labels:
+  io.hass.version: "1.0.0"
+  io.hass.type: "addon"
+  io.hass.arch: "aarch64|amd64|armv7"

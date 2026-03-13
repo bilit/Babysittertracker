@@ -1,45 +1,29 @@
 name: "Babysitter Tracker"
-version: "1.1.0"
+description: "Track babysitter hours from Nest doorbell clips with automatic pay calculation"
+version: "1.0.0"
 slug: "babysitter_tracker"
-description: "Track babysitter hours using Nest doorbell person-detection snapshots. Calculates pay at $16/hr (9am–3pm) and $10/hr all other hours."
-url: "https://github.com/bilit/Babysittertracker"
-arch:
-  - aarch64   # Raspberry Pi 4, 5
-  - amd64     # x86-64 (Intel NUC, etc.)
-  - armhf     # Raspberry Pi 3 (32-bit)
-  - armv7     # Older ARM boards
 init: false
-
-# ── Port ────────────────────────────────────────────────────────────────────
-ports:
-  5050/tcp: 5050
-ports_description:
-  5050/tcp: "Babysitter Tracker Web UI"
-
-# ── Ingress (shows as a panel inside HA UI) ─────────────────────────────────
-ingress: true
-ingress_port: 5050
-panel_icon: "mdi:baby-carriage"
-panel_title: "Babysitter Tracker"
-
-# ── Filesystem access ────────────────────────────────────────────────────────
-# /share  → HA shared storage; used for snapshot images
-# /data   → add-on private storage; used for SQLite DB
+arch:
+  - aarch64
+  - amd64
+  - armv7
 map:
-  - share:rw
   - config:ro
-
-# ── User-configurable options ────────────────────────────────────────────────
+  - share:rw
+  - data:rw
+ports:
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: "Web UI"
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:baby-carriage
+panel_title: Babysitter Tracker
 options:
   camera_entity: "camera.front_door"
-  # Accepts either an event entity (newer Nest integration, e.g. event.front_door_bell_motion)
-  # or a binary_sensor (older integration, e.g. binary_sensor.front_door_person)
   person_sensor: "event.front_door_bell_motion"
-  # Subpath inside /config/ where Nest saves event media clips.
-  # Default works without any automation — HA writes here automatically.
   snapshot_subdir: "nest/event_media"
   timezone: "America/New_York"
-
 schema:
   camera_entity: str
   person_sensor: str

@@ -1,22 +1,22 @@
-version: "3.8"
-
 services:
   babysitter-tracker:
     build: .
-    container_name: babysitter-tracker
     restart: unless-stopped
     ports:
-      - "${PORT:-5050}:5050"
-    env_file:
-      - .env
+      - "${PORT:-5050}:8099"
+    environment:
+      CAMERA_ENTITY: "${CAMERA_ENTITY}"
+      PERSON_SENSOR: "${PERSON_SENSOR}"
+      SNAPSHOT_DIR: "nest/event_media"
+      TIMEZONE: "${TIMEZONE:-America/New_York}"
     volumes:
-      # Mount your HA snapshot directory (read-only)
-      # Adjust the host path to wherever HA saves person-detection snapshots
-      - /path/to/homeassistant/www/snapshots:/config/www/snapshots:ro
-      # Persistent SQLite database
+      # Mount your HA config directory so the app can read Nest clips.
+      # Replace the host path with your actual HA config directory.
+      # Examples:
+      #   HA OS:     /mnt/data/supervisor/homeassistant:/config:ro
+      #   HA Docker: /home/user/ha-config:/config:ro
+      - /YOUR/HA/CONFIG/DIR:/config:ro
       - babysitter_data:/data
-    network_mode: host   # Remove if your HA is not on the host network;
-                         # use bridge + correct HA_URL instead.
 
 volumes:
   babysitter_data:

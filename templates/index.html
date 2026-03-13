@@ -1,1302 +1,492 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Babysitter Hours Tracker</title>
-  <style>
-    /* ── Reset & Base ── */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html { font-size: 15px; }
-    body {
-      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-      background: #0f172a;
-      color: #e2e8f0;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Babysitter Tracker</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f0f2f5; --card: #fff; --primary: #4f6ef7; --green: #22c55e;
+    --orange: #f97316; --red: #ef4444; --border: #e2e8f0;
+    --text: #1e293b; --muted: #64748b; --radius: 10px;
+  }
+  body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
 
-    /* ── App Shell ── */
-    .app-header {
-      background: #1e293b;
-      border-bottom: 1px solid #334155;
-      padding: 0.9rem 1.4rem;
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-      flex-wrap: wrap;
-    }
-    .app-header h1 { font-size: 1.2rem; font-weight: 700; color: #f8fafc; }
-    .app-header .subtitle { font-size: 0.8rem; color: #94a3b8; }
+  /* ── Nav ── */
+  nav { background: var(--card); border-bottom: 1px solid var(--border); padding: 0 16px; display: flex; gap: 4px; }
+  nav button { background: none; border: none; padding: 14px 16px; cursor: pointer; font-size: .9rem;
+    color: var(--muted); border-bottom: 2px solid transparent; transition: color .15s; }
+  nav button.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+  nav button:hover:not(.active) { color: var(--text); }
 
-    .week-nav {
-      margin-left: auto;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-    }
-    .week-nav button {
-      background: #334155;
-      border: none;
-      color: #cbd5e1;
-      width: 2rem; height: 2rem;
-      border-radius: 0.375rem;
-      cursor: pointer;
-      font-size: 1rem;
-      display: flex; align-items: center; justify-content: center;
-    }
-    .week-nav button:hover { background: #475569; }
-    #week-label {
-      font-size: 0.875rem;
-      font-weight: 600;
-      color: #f1f5f9;
-      min-width: 9rem;
-      text-align: center;
-    }
+  /* ── Banner ── */
+  #banner { display: none; position: sticky; top: 0; z-index: 10; background: #1e293b;
+    color: #fff; padding: 10px 16px; font-size: .9rem; align-items: center; gap: 12px; flex-wrap: wrap; }
+  #banner.show { display: flex; }
+  #banner b { color: #86efac; }
+  #banner button { margin-left: auto; background: var(--primary); color: #fff; border: none;
+    padding: 6px 14px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+  #banner button:disabled { opacity: .5; cursor: default; }
+  #banner .clear-btn { background: #475569; margin-left: 4px; }
 
-    .app-body {
-      display: flex;
-      flex: 1;
-      overflow: hidden;
-    }
+  /* ── Toolbar ── */
+  .toolbar { padding: 12px 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .toolbar select, .toolbar input { padding: 7px 10px; border: 1px solid var(--border);
+    border-radius: 6px; font-size: .875rem; background: var(--card); }
+  .toolbar label { font-size: .875rem; color: var(--muted); }
 
-    /* ── Sidebar ── */
-    .sidebar {
-      width: 260px;
-      min-width: 200px;
-      background: #1e293b;
-      border-right: 1px solid #334155;
-      display: flex;
-      flex-direction: column;
-      overflow-y: auto;
-    }
-    .sidebar-section { padding: 1rem; border-bottom: 1px solid #334155; }
-    .sidebar-section h3 {
-      font-size: 0.7rem;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: #64748b;
-      margin-bottom: 0.6rem;
-    }
+  /* ── Grid ── */
+  #clips-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 14px; padding: 0 16px 24px; }
 
-    /* Weekly pay card */
-    .pay-card {
-      background: #0f172a;
-      border-radius: 0.5rem;
-      padding: 0.75rem;
-    }
-    .pay-card .total {
-      font-size: 1.8rem;
-      font-weight: 800;
-      color: #4ade80;
-    }
-    .pay-card .detail {
-      font-size: 0.75rem;
-      color: #94a3b8;
-      margin-top: 0.25rem;
-      line-height: 1.5;
-    }
-    .pay-card .breakdown {
-      margin-top: 0.5rem;
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 0.25rem;
-    }
-    .pay-chip {
-      background: #1e293b;
-      border-radius: 0.25rem;
-      padding: 0.3rem 0.5rem;
-      font-size: 0.72rem;
-    }
-    .pay-chip .label { color: #94a3b8; }
-    .pay-chip .value { font-weight: 600; color: #f1f5f9; }
+  /* ── Clip card ── */
+  .clip-card { background: var(--card); border-radius: var(--radius); overflow: hidden;
+    border: 2px solid transparent; transition: border-color .15s, transform .1s; }
+  .clip-card:hover { transform: translateY(-2px); }
+  .clip-card.arrived { border-color: var(--green); }
+  .clip-card.departed { border-color: var(--orange); }
 
-    /* Sessions list in sidebar */
-    .session-item {
-      padding: 0.5rem 0.6rem;
-      border-radius: 0.375rem;
-      cursor: pointer;
-      display: flex;
-      flex-direction: column;
-      gap: 0.15rem;
-      font-size: 0.78rem;
-      transition: background 0.15s;
-    }
-    .session-item:hover { background: #334155; }
-    .session-item.active { background: #1d4ed8; }
-    .session-item .s-date { font-weight: 600; color: #f1f5f9; }
-    .session-item .s-time { color: #94a3b8; }
-    .session-item .s-pay { color: #4ade80; font-weight: 600; }
+  .clip-thumb { position: relative; width: 100%; aspect-ratio: 16/9; background: #0f172a;
+    cursor: pointer; overflow: hidden; }
+  .clip-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .clip-thumb video { display: none; width: 100%; height: 100%; object-fit: cover; }
+  .clip-thumb.playing img { display: none; }
+  .clip-thumb.playing video { display: block; }
+  .play-icon { position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; background: rgba(0,0,0,.35); transition: opacity .15s; }
+  .clip-thumb.playing .play-icon { display: none; }
+  .play-icon svg { width: 40px; height: 40px; fill: #fff; }
 
-    /* ── Main content ── */
-    .main {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
+  .clip-body { padding: 10px 12px; }
+  .clip-time { font-weight: 700; font-size: 1rem; }
+  .clip-date { font-size: .8rem; color: var(--muted); margin-bottom: 8px; }
+  .clip-actions { display: flex; gap: 6px; }
+  .clip-actions button { flex: 1; padding: 6px 4px; border: none; border-radius: 6px;
+    font-size: .8rem; font-weight: 600; cursor: pointer; transition: opacity .15s; }
+  .btn-arrive { background: #dcfce7; color: #166534; }
+  .btn-arrive.active { background: var(--green); color: #fff; }
+  .btn-depart { background: #ffedd5; color: #9a3412; }
+  .btn-depart.active { background: var(--orange); color: #fff; }
 
-    /* Tabs */
-    .tabs {
-      display: flex;
-      background: #1e293b;
-      border-bottom: 1px solid #334155;
-      padding: 0 1rem;
-    }
-    .tab-btn {
-      padding: 0.7rem 1rem;
-      background: none;
-      border: none;
-      color: #94a3b8;
-      font-size: 0.85rem;
-      font-weight: 500;
-      cursor: pointer;
-      border-bottom: 2px solid transparent;
-      margin-bottom: -1px;
-      transition: all 0.15s;
-    }
-    .tab-btn:hover { color: #e2e8f0; }
-    .tab-btn.active { color: #60a5fa; border-bottom-color: #60a5fa; }
+  /* ── Sessions table ── */
+  .section { padding: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: .875rem; background: var(--card);
+    border-radius: var(--radius); overflow: hidden; }
+  th { background: #f8fafc; color: var(--muted); font-weight: 600; text-align: left;
+    padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  .del-btn { background: none; border: none; color: var(--red); cursor: pointer; font-size: 1rem; }
 
-    .tab-panel { display: none; flex: 1; overflow-y: auto; padding: 1rem; }
-    .tab-panel.active { display: flex; flex-direction: column; gap: 1rem; }
+  /* ── Summary cards ── */
+  .summary-totals { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  .stat-card { background: var(--card); border-radius: var(--radius); padding: 14px 18px; flex: 1; min-width: 130px; }
+  .stat-card .label { font-size: .78rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .stat-card .value { font-size: 1.6rem; font-weight: 700; margin-top: 4px; }
 
-    /* ── Snapshot Grid ── */
-    .snapshot-controls {
-      display: flex;
-      gap: 0.5rem;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-    .snapshot-controls label { font-size: 0.8rem; color: #94a3b8; }
-    .snapshot-controls input[type="date"],
-    .snapshot-controls select {
-      background: #1e293b;
-      border: 1px solid #334155;
-      color: #f1f5f9;
-      border-radius: 0.375rem;
-      padding: 0.35rem 0.6rem;
-      font-size: 0.82rem;
-    }
-    .btn {
-      padding: 0.4rem 0.9rem;
-      border-radius: 0.375rem;
-      border: none;
-      cursor: pointer;
-      font-size: 0.82rem;
-      font-weight: 600;
-      transition: background 0.15s;
-    }
-    .btn-primary { background: #2563eb; color: #fff; }
-    .btn-primary:hover { background: #1d4ed8; }
-    .btn-success { background: #16a34a; color: #fff; }
-    .btn-success:hover { background: #15803d; }
-    .btn-danger  { background: #dc2626; color: #fff; }
-    .btn-danger:hover  { background: #b91c1c; }
-    .btn-ghost   { background: #334155; color: #cbd5e1; }
-    .btn-ghost:hover   { background: #475569; }
+  /* ── Manual entry ── */
+  .form-card { background: var(--card); border-radius: var(--radius); padding: 20px; max-width: 420px; }
+  .form-row { margin-bottom: 14px; }
+  .form-row label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 4px; }
+  .form-row input { width: 100%; padding: 8px 10px; border: 1px solid var(--border);
+    border-radius: 6px; font-size: .9rem; }
+  .preview-box { background: #f8fafc; border-radius: 8px; padding: 12px; margin: 12px 0;
+    font-size: .9rem; display: none; }
+  .preview-box.show { display: block; }
+  .preview-box .row { display: flex; justify-content: space-between; padding: 2px 0; }
+  .preview-box .total { font-weight: 700; font-size: 1.05rem; border-top: 1px solid var(--border); margin-top: 6px; padding-top: 6px; }
+  .btn-primary { background: var(--primary); color: #fff; border: none; padding: 10px 22px;
+    border-radius: 8px; font-size: .95rem; font-weight: 600; cursor: pointer; }
+  .btn-primary:disabled { opacity: .5; cursor: default; }
 
-    .snapshot-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-      gap: 0.75rem;
-    }
-    .snap-card {
-      background: #1e293b;
-      border-radius: 0.5rem;
-      overflow: hidden;
-      border: 2px solid transparent;
-      cursor: pointer;
-      transition: border-color 0.15s, transform 0.1s;
-      position: relative;
-    }
-    .snap-card:hover { transform: translateY(-1px); border-color: #475569; }
-    .snap-card.selected-arrival  { border-color: #22c55e; }
-    .snap-card.selected-departure{ border-color: #f97316; }
-    .snap-card img {
-      width: 100%;
-      aspect-ratio: 4/3;
-      object-fit: cover;
-      display: block;
-      background: #0f172a;
-    }
-    .snap-card .snap-info {
-      padding: 0.4rem 0.5rem;
-      font-size: 0.72rem;
-      color: #94a3b8;
-    }
-    .snap-card .snap-time { font-weight: 600; color: #f1f5f9; }
-    .snap-tag {
-      position: absolute;
-      top: 0.3rem;
-      left: 0.3rem;
-      padding: 0.15rem 0.4rem;
-      border-radius: 0.25rem;
-      font-size: 0.65rem;
-      font-weight: 700;
-      text-transform: uppercase;
-    }
-    .snap-tag.arrival  { background: #22c55e; color: #052e16; }
-    .snap-tag.departure{ background: #f97316; color: #431407; }
+  .empty { text-align: center; padding: 48px; color: var(--muted); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
 
-    .snap-actions {
-      display: flex;
-      gap: 0.3rem;
-      padding: 0.3rem 0.4rem 0.5rem;
-    }
-    .snap-actions button {
-      flex: 1;
-      padding: 0.3rem;
-      border-radius: 0.25rem;
-      border: none;
-      cursor: pointer;
-      font-size: 0.68rem;
-      font-weight: 600;
-    }
-    .btn-arrival  { background: #166534; color: #dcfce7; }
-    .btn-arrival:hover  { background: #15803d; }
-    .btn-arrival.picked  { background: #22c55e; color: #052e16; }
-    .btn-departure{ background: #9a3412; color: #ffedd5; }
-    .btn-departure:hover{ background: #c2410c; }
-    .btn-departure.picked{ background: #f97316; color: #431407; }
-
-    /* Selection banner */
-    #selection-banner {
-      display: none;
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 0.5rem;
-      padding: 0.75rem 1rem;
-      flex-direction: row;
-      gap: 1.5rem;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-    #selection-banner.visible { display: flex; }
-    .sel-item { display: flex; flex-direction: column; gap: 0.1rem; }
-    .sel-item .sel-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.07em; color: #64748b; }
-    .sel-item .sel-val   { font-size: 0.85rem; font-weight: 600; }
-    .sel-item .sel-val.arrival   { color: #4ade80; }
-    .sel-item .sel-val.departure { color: #fb923c; }
-    .pay-preview {
-      margin-left: auto;
-      display: flex;
-      gap: 1rem;
-      align-items: center;
-    }
-    .pay-preview .pp-total {
-      font-size: 1.4rem;
-      font-weight: 800;
-      color: #4ade80;
-    }
-
-    /* ── Sessions Tab ── */
-    .session-card {
-      background: #1e293b;
-      border-radius: 0.5rem;
-      padding: 1rem;
-      display: flex;
-      gap: 1.5rem;
-      align-items: flex-start;
-      flex-wrap: wrap;
-    }
-    .session-card .sc-date {
-      font-size: 0.9rem;
-      font-weight: 700;
-      color: #f1f5f9;
-      min-width: 7rem;
-    }
-    .session-card .sc-times { font-size: 0.8rem; color: #94a3b8; }
-    .session-card .sc-pay-total {
-      font-size: 1.2rem;
-      font-weight: 800;
-      color: #4ade80;
-      margin-left: auto;
-    }
-    .session-card .sc-breakdown {
-      font-size: 0.75rem;
-      color: #94a3b8;
-      line-height: 1.6;
-    }
-    .session-card .sc-actions {
-      display: flex;
-      gap: 0.4rem;
-      align-items: center;
-    }
-
-    /* ── New Session Form ── */
-    .form-card {
-      background: #1e293b;
-      border-radius: 0.5rem;
-      padding: 1rem;
-    }
-    .form-card h3 { font-size: 0.85rem; font-weight: 700; color: #f1f5f9; margin-bottom: 0.75rem; }
-    .form-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-      gap: 0.75rem;
-    }
-    .form-group { display: flex; flex-direction: column; gap: 0.3rem; }
-    .form-group label { font-size: 0.75rem; color: #94a3b8; }
-    .form-group input,
-    .form-group textarea,
-    .form-group select {
-      background: #0f172a;
-      border: 1px solid #334155;
-      color: #f1f5f9;
-      border-radius: 0.375rem;
-      padding: 0.4rem 0.6rem;
-      font-size: 0.82rem;
-    }
-    .form-group input:focus,
-    .form-group textarea:focus {
-      outline: none;
-      border-color: #3b82f6;
-    }
-    .form-actions { margin-top: 0.75rem; display: flex; gap: 0.5rem; }
-
-    /* ── Weekly Summary Tab ── */
-    .summary-day {
-      background: #1e293b;
-      border-radius: 0.5rem;
-      overflow: hidden;
-    }
-    .summary-day-header {
-      background: #0f172a;
-      padding: 0.6rem 1rem;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 0.82rem;
-    }
-    .summary-day-header .day-name { font-weight: 700; color: #f1f5f9; }
-    .summary-day-header .day-pay  { font-weight: 800; color: #4ade80; }
-    .summary-day-body { padding: 0.5rem 1rem; }
-    .summary-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr 1fr;
-      font-size: 0.78rem;
-      padding: 0.3rem 0;
-      border-bottom: 1px solid #334155;
-    }
-    .summary-row:last-child { border-bottom: none; }
-    .summary-row .sr-label { color: #94a3b8; }
-
-    .summary-totals {
-      background: linear-gradient(135deg, #1d4ed8 0%, #6d28d9 100%);
-      border-radius: 0.5rem;
-      padding: 1.2rem;
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-      gap: 1rem;
-    }
-    .st-item { display: flex; flex-direction: column; gap: 0.2rem; }
-    .st-item .st-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; color: #bfdbfe; }
-    .st-item .st-value { font-size: 1.3rem; font-weight: 800; color: #fff; }
-
-    /* ── Modals ── */
-    .modal-overlay {
-      display: none;
-      position: fixed; inset: 0;
-      background: rgba(0,0,0,0.7);
-      z-index: 50;
-      align-items: center;
-      justify-content: center;
-    }
-    .modal-overlay.open { display: flex; }
-    .modal {
-      background: #1e293b;
-      border-radius: 0.75rem;
-      padding: 1.5rem;
-      max-width: 90vw;
-      max-height: 90vh;
-      overflow: auto;
-      position: relative;
-    }
-    .modal img, .modal video { max-width: 80vw; max-height: 70vh; border-radius: 0.5rem; display: block; }
-    .video-badge {
-      position: absolute; top: 0.3rem; right: 0.3rem;
-      background: rgba(0,0,0,0.6); color: #fff;
-      font-size: 0.65rem; font-weight: 700; padding: 0.15rem 0.35rem;
-      border-radius: 0.2rem; pointer-events: none;
-    }
-    .modal-close {
-      position: absolute;
-      top: 0.75rem; right: 0.75rem;
-      background: #334155;
-      border: none;
-      color: #f1f5f9;
-      width: 2rem; height: 2rem;
-      border-radius: 50%;
-      cursor: pointer;
-      font-size: 1rem;
-    }
-    .modal-close:hover { background: #475569; }
-
-    /* ── Toast ── */
-    #toast {
-      position: fixed;
-      bottom: 1.5rem; right: 1.5rem;
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-left: 4px solid #22c55e;
-      border-radius: 0.5rem;
-      padding: 0.75rem 1rem;
-      font-size: 0.82rem;
-      color: #f1f5f9;
-      opacity: 0;
-      transform: translateY(1rem);
-      transition: all 0.3s;
-      z-index: 100;
-      max-width: 320px;
-    }
-    #toast.show { opacity: 1; transform: translateY(0); }
-    #toast.error { border-left-color: #ef4444; }
-
-    /* Spinner */
-    .spinner {
-      width: 2rem; height: 2rem;
-      border: 3px solid #334155;
-      border-top-color: #3b82f6;
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-      margin: 2rem auto;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    .empty-state {
-      text-align: center;
-      color: #475569;
-      padding: 3rem 1rem;
-      font-size: 0.88rem;
-    }
-  </style>
+  @media (max-width: 480px) {
+    #clips-grid { grid-template-columns: 1fr 1fr; }
+    .clip-actions button { font-size: .72rem; }
+  }
+</style>
 </head>
 <body>
 
-<!-- ── Header ── -->
-<header class="app-header">
-  <div>
-    <h1>Babysitter Hours Tracker</h1>
-    <div class="subtitle">${{ "%.0f"|format(16) }}/hr (9am–3pm) &nbsp;·&nbsp; ${{ "%.0f"|format(10) }}/hr (all other hours)</div>
-  </div>
-  <div class="week-nav">
-    <button id="prev-week" title="Previous week">&#8249;</button>
-    <span id="week-label">Loading…</span>
-    <button id="next-week" title="Next week">&#8250;</button>
-    <button class="btn btn-ghost" id="btn-refresh" style="margin-left:0.5rem;width:auto;padding:0 0.7rem;">&#8635; Refresh</button>
-  </div>
-</header>
+<nav>
+  <button class="active" onclick="showTab('clips')">Clips</button>
+  <button onclick="showTab('sessions')">Sessions</button>
+  <button onclick="showTab('summary')">Weekly Summary</button>
+  <button onclick="showTab('manual')">Manual Entry</button>
+</nav>
 
-<!-- ── App Body ── -->
-<div class="app-body">
-
-  <!-- Sidebar -->
-  <aside class="sidebar">
-    <div class="sidebar-section">
-      <h3>Weekly Pay</h3>
-      <div class="pay-card">
-        <div class="total" id="sb-total">$0.00</div>
-        <div class="detail" id="sb-hours">0h total</div>
-        <div class="breakdown">
-          <div class="pay-chip">
-            <div class="label">Peak hrs</div>
-            <div class="value" id="sb-peak-hrs">0h</div>
-          </div>
-          <div class="pay-chip">
-            <div class="label">Peak pay</div>
-            <div class="value" id="sb-peak-pay">$0</div>
-          </div>
-          <div class="pay-chip">
-            <div class="label">Off-peak hrs</div>
-            <div class="value" id="sb-off-hrs">0h</div>
-          </div>
-          <div class="pay-chip">
-            <div class="label">Off-peak pay</div>
-            <div class="value" id="sb-off-pay">$0</div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="sidebar-section" style="flex:1;overflow-y:auto;">
-      <h3>Sessions this week</h3>
-      <div id="sidebar-sessions"></div>
-    </div>
-  </aside>
-
-  <!-- Main -->
-  <main class="main">
-    <nav class="tabs">
-      <button class="tab-btn active" data-tab="snapshots">Snapshots</button>
-      <button class="tab-btn" data-tab="sessions">Sessions</button>
-      <button class="tab-btn" data-tab="summary">Weekly Summary</button>
-      <button class="tab-btn" data-tab="manual">Manual Entry</button>
-    </nav>
-
-    <!-- ── Snapshots Tab ── -->
-    <section class="tab-panel active" id="tab-snapshots">
-
-      <!-- Selection banner -->
-      <div id="selection-banner">
-        <div class="sel-item">
-          <span class="sel-label">Arrived</span>
-          <span class="sel-val arrival" id="sel-arrival-time">—</span>
-        </div>
-        <div class="sel-item">
-          <span class="sel-label">Departed</span>
-          <span class="sel-val departure" id="sel-departure-time">—</span>
-        </div>
-        <div class="sel-item">
-          <span class="sel-label">Duration</span>
-          <span class="sel-val" id="sel-duration" style="color:#f1f5f9">—</span>
-        </div>
-        <div class="pay-preview">
-          <div style="text-align:right">
-            <div style="font-size:0.68rem;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;">Estimated Pay</div>
-            <div class="pp-total" id="sel-pay">$0.00</div>
-          </div>
-          <button class="btn btn-success" id="btn-save-session">Save Session</button>
-          <button class="btn btn-ghost" id="btn-clear-selection">Clear</button>
-        </div>
-      </div>
-
-      <!-- Filter controls -->
-      <div class="snapshot-controls">
-        <label>Filter by date:</label>
-        <input type="date" id="snap-date-filter" />
-        <button class="btn btn-primary" id="btn-filter-snaps">Filter</button>
-        <button class="btn btn-ghost" id="btn-show-week">Show Week</button>
-        <span style="margin-left:auto;font-size:0.78rem;color:#64748b;" id="snap-count"></span>
-      </div>
-
-      <div id="snapshot-grid" class="snapshot-grid">
-        <div class="spinner"></div>
-      </div>
-    </section>
-
-    <!-- ── Sessions Tab ── -->
-    <section class="tab-panel" id="tab-sessions">
-      <div id="sessions-list"></div>
-    </section>
-
-    <!-- ── Weekly Summary Tab ── -->
-    <section class="tab-panel" id="tab-summary">
-      <div id="summary-content"></div>
-    </section>
-
-    <!-- ── Manual Entry Tab ── -->
-    <section class="tab-panel" id="tab-manual">
-      <div class="form-card">
-        <h3>Add Session Manually</h3>
-        <div class="form-grid">
-          <div class="form-group">
-            <label>Date</label>
-            <input type="date" id="m-date" />
-          </div>
-          <div class="form-group">
-            <label>Arrival time</label>
-            <input type="time" id="m-arrival" />
-          </div>
-          <div class="form-group">
-            <label>Departure time</label>
-            <input type="time" id="m-departure" />
-          </div>
-          <div class="form-group" style="grid-column:1/-1">
-            <label>Notes (optional)</label>
-            <textarea id="m-notes" rows="2" style="resize:vertical;"></textarea>
-          </div>
-        </div>
-        <div id="manual-pay-preview" style="margin-top:0.6rem;font-size:0.82rem;color:#94a3b8;"></div>
-        <div class="form-actions">
-          <button class="btn btn-success" id="btn-manual-save">Save Session</button>
-          <button class="btn btn-ghost" id="btn-manual-clear">Clear</button>
-        </div>
-      </div>
-    </section>
-  </main>
+<div id="banner">
+  <span id="banner-text">Select an arrival and departure clip.</span>
+  <button id="save-btn" disabled onclick="saveSession()">Save Session</button>
+  <button class="clear-btn" onclick="clearSelection()">Clear</button>
 </div>
 
-<!-- ── Image lightbox modal ── -->
-<div class="modal-overlay" id="lightbox">
-  <div class="modal">
-    <button class="modal-close" id="lightbox-close">&times;</button>
-    <div id="lightbox-media"></div>
-    <div id="lightbox-info" style="margin-top:0.5rem;font-size:0.8rem;color:#94a3b8;text-align:center;"></div>
+<!-- CLIPS TAB -->
+<div id="tab-clips" class="tab-panel active">
+  <div class="toolbar">
+    <label>Week:</label>
+    <select id="week-select" onchange="loadClips()"></select>
+    <label>Date:</label>
+    <input type="date" id="date-filter" onchange="loadClips()">
+    <button onclick="clearDateFilter()" style="font-size:.8rem;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);cursor:pointer">Clear date</button>
+  </div>
+  <div id="clips-grid"></div>
+</div>
+
+<!-- SESSIONS TAB -->
+<div id="tab-sessions" class="tab-panel">
+  <div class="toolbar">
+    <label>Week:</label>
+    <select id="session-week-select" onchange="loadSessions()"></select>
+  </div>
+  <div class="section">
+    <table id="sessions-table">
+      <thead><tr>
+        <th>Date</th><th>Arrived</th><th>Departed</th>
+        <th>Hours</th><th>Pay</th><th></th>
+      </tr></thead>
+      <tbody id="sessions-body"></tbody>
+    </table>
   </div>
 </div>
 
-<!-- ── Toast ── -->
-<div id="toast"></div>
+<!-- SUMMARY TAB -->
+<div id="tab-summary" class="tab-panel">
+  <div class="toolbar">
+    <label>Week:</label>
+    <select id="summary-week-select" onchange="loadSummary()"></select>
+  </div>
+  <div class="section">
+    <div class="summary-totals" id="summary-totals"></div>
+    <table id="summary-table">
+      <thead><tr>
+        <th>Date</th><th>Arrived</th><th>Departed</th>
+        <th>Peak hrs</th><th>Off-peak hrs</th><th>Total hrs</th><th>Total pay</th>
+      </tr></thead>
+      <tbody id="summary-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- MANUAL TAB -->
+<div id="tab-manual" class="tab-panel">
+  <div class="section">
+    <div class="form-card">
+      <h2 style="margin-bottom:16px;font-size:1.1rem">Add session manually</h2>
+      <div class="form-row">
+        <label>Date</label>
+        <input type="date" id="m-date" oninput="calcPreview()">
+      </div>
+      <div class="form-row">
+        <label>Arrived</label>
+        <input type="time" id="m-arrived" oninput="calcPreview()">
+      </div>
+      <div class="form-row">
+        <label>Departed</label>
+        <input type="time" id="m-departed" oninput="calcPreview()">
+      </div>
+      <div class="preview-box" id="preview-box">
+        <div class="row"><span>Peak hours (9 AM–3 PM)</span><span id="p-peak-hrs">—</span></div>
+        <div class="row"><span>Peak pay ($16/hr)</span><span id="p-peak-pay">—</span></div>
+        <div class="row"><span>Off-peak hours</span><span id="p-op-hrs">—</span></div>
+        <div class="row"><span>Off-peak pay ($10/hr)</span><span id="p-op-pay">—</span></div>
+        <div class="row total"><span>Total</span><span id="p-total">—</span></div>
+      </div>
+      <button class="btn-primary" id="m-save-btn" disabled onclick="saveManual()">Save Session</button>
+    </div>
+  </div>
+</div>
 
 <script>
-// ────────────────────────────────────────────────────────────────────────────
-// State
-// ────────────────────────────────────────────────────────────────────────────
-let currentWeek = "";
-let snapshots   = [];
-let sessions    = [];
-let summary     = null;
+// ── State ──────────────────────────────────────────────────────────────────
+let sel = { arrived: null, departed: null };
+let currentWeek = '';
+let allWeeks = [];
 
-let selectedArrival   = null;  // snapshot object
-let selectedDeparture = null;  // snapshot object
-
-// ────────────────────────────────────────────────────────────────────────────
-// Utilities
-// ────────────────────────────────────────────────────────────────────────────
-function fmt(date) {
-  if (!date) return "—";
-  const d = new Date(date);
-  if (isNaN(d)) return date;
-  return d.toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" });
+// ── Tab routing ────────────────────────────────────────────────────────────
+function showTab(name) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  event.target.classList.add('active');
+  if (name === 'sessions') loadSessions();
+  if (name === 'summary') loadSummary();
 }
 
-function fmtTime(isoStr) {
-  if (!isoStr) return "—";
-  const d = new Date(isoStr);
-  if (isNaN(d)) return isoStr;
-  return d.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" });
-}
-
-function fmtDate(isoStr) {
-  if (!isoStr) return "—";
-  // handle "YYYY-MM-DD" strings without timezone shift
-  const [y,m,dd] = isoStr.split("-");
-  const d = new Date(+y, +m - 1, +dd);
-  return d.toLocaleDateString([], { weekday:"short", month:"short", day:"numeric" });
-}
-
-function hms(hours) {
-  const h = Math.floor(hours);
-  const m = Math.round((hours - h) * 60);
-  return m ? `${h}h ${m}m` : `${h}h`;
-}
-
-function toast(msg, isError = false) {
-  const el = document.getElementById("toast");
-  el.textContent = msg;
-  el.className = "show" + (isError ? " error" : "");
-  clearTimeout(el._timer);
-  el._timer = setTimeout(() => { el.className = ""; }, 3500);
-}
-
-async function api(path, opts = {}) {
-  const res = await fetch(path, opts);
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(txt || res.statusText);
-  }
-  return res.json();
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Week navigation
-// ────────────────────────────────────────────────────────────────────────────
-function weekLabel(w) {
-  // YYYY-Www → "Mon DD MMM – Sun DD MMM YYYY"
-  const [year, wnum] = w.split("-W");
-  const jan4 = new Date(+year, 0, 4);
-  const startOfWeek1 = new Date(jan4);
-  startOfWeek1.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7));
-  const monday = new Date(startOfWeek1);
-  monday.setDate(startOfWeek1.getDate() + (+wnum - 1) * 7);
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  const opts = { month: "short", day: "numeric" };
-  return `${monday.toLocaleDateString([], opts)} – ${sunday.toLocaleDateString([], { ...opts, year: "numeric" })}`;
-}
-
+// ── Week helpers ───────────────────────────────────────────────────────────
 function isoWeek(d) {
-  const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay() || 7));
-  const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
-  const week = Math.ceil((((tmp - yearStart) / 86400000) + 1) / 7);
-  return `${tmp.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+  const dt = d ? new Date(d) : new Date();
+  const thu = new Date(dt);
+  thu.setDate(dt.getDate() - ((dt.getDay() + 6) % 7) + 3);
+  const jan4 = new Date(thu.getFullYear(), 0, 4);
+  const week = 1 + Math.round(((thu - jan4) / 86400000 - 3 + (jan4.getDay() + 6) % 7) / 7);
+  return `${thu.getFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
-function changeWeek(delta) {
-  const [y, w] = currentWeek.split("-W");
-  const d = new Date(+y, 0, 1 + (+w - 1) * 7);
-  d.setDate(d.getDate() + delta * 7);
-  currentWeek = isoWeek(d);
-  document.getElementById("week-label").textContent = weekLabel(currentWeek);
-  loadAll();
+function fmtTime(iso) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// Pay calculation (client-side mirror of server logic)
-// ────────────────────────────────────────────────────────────────────────────
-function calcPay(arrivalISO, departureISO) {
-  const arr = new Date(arrivalISO);
-  const dep = new Date(departureISO);
-  if (dep <= arr) return { total_hours:0, peak_hours:0, off_peak_hours:0, peak_pay:0, off_peak_pay:0, total_pay:0 };
-
-  const peakStart = new Date(arr); peakStart.setHours(9, 0, 0, 0);
-  const peakEnd   = new Date(arr); peakEnd.setHours(15, 0, 0, 0);
-
-  const secs = (a, b) => Math.max(0, b - a) / 1000;
-  const seg1 = secs(arr, Math.min(peakStart, dep));   // off-peak before
-  const seg2 = secs(Math.max(arr, peakStart), Math.min(dep, peakEnd));  // peak
-  const seg3 = secs(Math.max(arr, peakEnd), dep);     // off-peak after
-
-  const offH = (seg1 + seg3) / 3600;
-  const pkH  = seg2 / 3600;
-  return {
-    total_hours:    offH + pkH,
-    peak_hours:     pkH,
-    off_peak_hours: offH,
-    peak_pay:       pkH  * 16,
-    off_peak_pay:   offH * 10,
-    total_pay:      pkH  * 16 + offH * 10,
-  };
+function fmtDate(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 }
+function fmtHrs(h) { return h.toFixed(2) + ' hrs'; }
+function fmtPay(p) { return '$' + p.toFixed(2); }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Load data
-// ────────────────────────────────────────────────────────────────────────────
-async function loadAll() {
-  await Promise.all([loadSnapshots(), loadSessions(), loadSummary()]);
-}
+async function loadWeeks() {
+  const res = await fetch('/api/clips/weeks');
+  allWeeks = await res.json();
+  const now = isoWeek();
+  if (!allWeeks.includes(now)) allWeeks.unshift(now);
 
-async function loadSnapshots(dateFilter) {
-  const grid = document.getElementById("snapshot-grid");
-  grid.innerHTML = '<div class="spinner"></div>';
-
-  let url = `/api/snapshots?week=${currentWeek}`;
-  if (dateFilter) url = `/api/snapshots?date=${dateFilter}`;
-
-  try {
-    snapshots = await api(url);
-    renderSnapshotGrid();
-  } catch (e) {
-    grid.innerHTML = `<div class="empty-state">Error loading snapshots: ${e.message}</div>`;
-  }
-}
-
-async function loadSessions() {
-  try {
-    sessions = await api(`/api/sessions?week=${currentWeek}`);
-    renderSessionsTab();
-    renderSidebarSessions();
-  } catch (e) {
-    sessions = [];
-  }
-}
-
-async function loadSummary() {
-  try {
-    summary = await api(`/api/summary/week/${currentWeek}`);
-    renderSummaryTab();
-    renderSidebarPay();
-  } catch (e) {
-    summary = null;
-  }
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Render: Snapshot grid
-// ────────────────────────────────────────────────────────────────────────────
-function renderSnapshotGrid() {
-  const grid = document.getElementById("snapshot-grid");
-  const count = document.getElementById("snap-count");
-
-  if (!snapshots.length) {
-    grid.innerHTML = `<div class="empty-state">No clips found for this period.<br>
-      Make sure <strong>SNAPSHOT_DIR</strong> points to your HA Nest event_media folder<br>
-      (default: <code>/config/nest/event_media</code>) and events have been triggered.</div>`;
-    count.textContent = "";
-    return;
-  }
-
-  count.textContent = `${snapshots.length} clip${snapshots.length !== 1 ? "s" : ""}`;
-  grid.innerHTML = "";
-
-  snapshots.forEach(snap => {
-    const isArr = selectedArrival  && selectedArrival.id  === snap.id;
-    const isDep = selectedDeparture && selectedDeparture.id === snap.id;
-    const isVideo = snap.media_type === "video";
-
-    const card = document.createElement("div");
-    card.className = "snap-card" + (isArr ? " selected-arrival" : isDep ? " selected-departure" : "");
-    card.dataset.id = snap.id;
-
-    const d = new Date(snap.ts);
-
-    // For video: show a muted autoplay loop as the thumbnail; fall back to
-    // a poster from /image (which returns 204 if no thumbnail exists).
-    const mediaEl = isVideo
-      ? `<video src="/api/snapshots/${snap.id}/video"
-               poster="/api/snapshots/${snap.id}/image"
-               muted playsinline preload="metadata"
-               style="width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:#0f172a;"
-               onerror="this.style.background='#334155'"></video>
-         <span class="video-badge">▶ VIDEO</span>`
-      : `<img src="/api/snapshots/${snap.id}/image" alt="Snapshot"
-              loading="lazy"
-              onerror="this.style.background='#334155';this.alt='No image';" />`;
-
-    card.innerHTML = `
-      ${isArr ? '<span class="snap-tag arrival">Arrived</span>' : ""}
-      ${isDep ? '<span class="snap-tag departure">Departed</span>' : ""}
-      ${mediaEl}
-      <div class="snap-info">
-        <div class="snap-time">${d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</div>
-        <div>${d.toLocaleDateString([], {weekday:"short",month:"short",day:"numeric"})}</div>
-      </div>
-      <div class="snap-actions">
-        <button class="btn-arrival${isArr ? " picked" : ""}" data-action="arrival" data-id="${snap.id}">
-          ${isArr ? "✓ Arrived" : "Arrived"}
-        </button>
-        <button class="btn-departure${isDep ? " picked" : ""}" data-action="departure" data-id="${snap.id}">
-          ${isDep ? "✓ Departed" : "Departed"}
-        </button>
-        <button style="background:#1e3a5f;color:#93c5fd;flex:0;padding:0.3rem 0.5rem;"
-                data-action="zoom" data-id="${snap.id}"
-                data-media-type="${snap.media_type || 'image'}"
-                title="View full size">⤢</button>
-      </div>`;
-    grid.appendChild(card);
+  ['week-select', 'session-week-select', 'summary-week-select'].forEach(id => {
+    const sel = document.getElementById(id);
+    sel.innerHTML = allWeeks.map(w =>
+      `<option value="${w}" ${w === now ? 'selected' : ''}>${w}</option>`).join('');
   });
-
-  // Update banner
-  updateSelectionBanner();
+  currentWeek = now;
 }
 
-function updateSelectionBanner() {
-  const banner = document.getElementById("selection-banner");
-  const hasAny = selectedArrival || selectedDeparture;
-  banner.classList.toggle("visible", hasAny);
+// ── Clips ──────────────────────────────────────────────────────────────────
+async function loadClips() {
+  const week = document.getElementById('week-select').value;
+  const date = document.getElementById('date-filter').value;
+  let url = `/api/clips?week=${week}`;
+  if (date) url += `&date=${date}`;
 
-  const arrEl = document.getElementById("sel-arrival-time");
-  const depEl = document.getElementById("sel-departure-time");
-  const durEl = document.getElementById("sel-duration");
-  const payEl = document.getElementById("sel-pay");
+  const clips = await fetch(url).then(r => r.json());
+  const grid = document.getElementById('clips-grid');
 
-  arrEl.textContent = selectedArrival  ? fmtTime(selectedArrival.ts)  : "—";
-  depEl.textContent = selectedDeparture ? fmtTime(selectedDeparture.ts) : "—";
-
-  if (selectedArrival && selectedDeparture) {
-    const pay = calcPay(selectedArrival.ts, selectedDeparture.ts);
-    durEl.textContent = hms(pay.total_hours);
-    payEl.textContent = `$${pay.total_pay.toFixed(2)}`;
-  } else {
-    durEl.textContent = "—";
-    payEl.textContent = "$0.00";
-  }
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Render: Sessions tab
-// ────────────────────────────────────────────────────────────────────────────
-function renderSessionsTab() {
-  const el = document.getElementById("sessions-list");
-  if (!sessions.length) {
-    el.innerHTML = `<div class="empty-state">No sessions recorded for this week.</div>`;
+  if (!clips.length) {
+    grid.innerHTML = '<div class="empty" style="grid-column:1/-1">No clips found for this period.<br><small>Make sure your Nest integration is saving event media.</small></div>';
     return;
   }
 
-  el.innerHTML = sessions.map(s => {
-    const pay = s.pay;
-    return `
-    <div class="session-card" data-id="${s.id}">
-      <div>
-        <div class="sc-date">${fmtDate(s.session_date)}</div>
-        <div class="sc-times">
-          ${s.arrival_time   ? "In: "  + fmtTime(s.arrival_time)   : "No arrival"}
-          &nbsp;→&nbsp;
-          ${s.departure_time ? "Out: " + fmtTime(s.departure_time) : "No departure"}
+  grid.innerHTML = clips.map(c => `
+    <div class="clip-card ${sel.arrived?.path===c.path?'arrived':''} ${sel.departed?.path===c.path?'departed':''}" id="card-${c.ts}">
+      <div class="clip-thumb" id="thumb-${c.ts}" onclick="togglePlay('${c.ts}','${c.path}')">
+        <img src="/thumb/${c.path}" onerror="this.style.display='none'" alt="">
+        <video id="vid-${c.ts}" preload="none" muted playsinline></video>
+        <div class="play-icon"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+      </div>
+      <div class="clip-body">
+        <div class="clip-time">${c.time}</div>
+        <div class="clip-date">${c.date}</div>
+        <div class="clip-actions">
+          <button class="btn-arrive ${sel.arrived?.path===c.path?'active':''}"
+            onclick="markArrived(${c.ts},'${c.path}','${c.datetime}')">Arrived</button>
+          <button class="btn-depart ${sel.departed?.path===c.path?'active':''}"
+            onclick="markDeparted(${c.ts},'${c.path}','${c.datetime}')">Departed</button>
         </div>
-        ${s.notes ? `<div style="font-size:0.75rem;color:#64748b;margin-top:0.2rem;">${s.notes}</div>` : ""}
       </div>
-      ${pay ? `
-      <div class="sc-breakdown">
-        <div>${hms(pay.peak_hours)} @ $16/hr = <strong style="color:#f1f5f9">$${pay.peak_pay.toFixed(2)}</strong></div>
-        <div>${hms(pay.off_peak_hours)} @ $10/hr = <strong style="color:#f1f5f9">$${pay.off_peak_pay.toFixed(2)}</strong></div>
-        <div style="color:#94a3b8">${hms(pay.total_hours)} total</div>
-      </div>
-      <div class="sc-pay-total">$${pay.total_pay.toFixed(2)}</div>
-      ` : `<div style="color:#64748b;font-size:0.8rem;">Incomplete times</div>`}
-      <div class="sc-actions">
-        <button class="btn btn-danger" data-action="delete" data-id="${s.id}" style="font-size:0.75rem;padding:0.3rem 0.6rem;">Delete</button>
-      </div>
-    </div>`;
-  }).join("");
+    </div>`).join('');
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Render: Summary tab
-// ────────────────────────────────────────────────────────────────────────────
-function renderSummaryTab() {
-  const el = document.getElementById("summary-content");
-  if (!summary) { el.innerHTML = ""; return; }
+function clearDateFilter() {
+  document.getElementById('date-filter').value = '';
+  loadClips();
+}
 
-  const { days, day_totals, totals } = summary;
-  const dayNames = Object.keys(days).sort();
-
-  // Build a lookup: session_date → day aggregate row
-  const dayAgg = {};
-  (day_totals || []).forEach(d => { dayAgg[d.session_date] = d; });
-
-  let html = `
-    <div class="summary-totals">
-      <div class="st-item"><div class="st-label">Weekly Total Pay</div><div class="st-value">$${totals.total_pay.toFixed(2)}</div></div>
-      <div class="st-item"><div class="st-label">Total Hours</div><div class="st-value">${hms(totals.total_hours)}</div></div>
-      <div class="st-item"><div class="st-label">Peak Hours (9–3)</div><div class="st-value">${hms(totals.peak_hours)}</div></div>
-      <div class="st-item"><div class="st-label">Peak Pay</div><div class="st-value">$${totals.peak_pay.toFixed(2)}</div></div>
-      <div class="st-item"><div class="st-label">Off-Peak Hours</div><div class="st-value">${hms(totals.off_peak_hours)}</div></div>
-      <div class="st-item"><div class="st-label">Off-Peak Pay</div><div class="st-value">$${totals.off_peak_pay.toFixed(2)}</div></div>
-    </div>`;
-
-  if (!dayNames.length) {
-    html += `<div class="empty-state">No sessions this week.</div>`;
+function togglePlay(ts, path) {
+  const thumb = document.getElementById('thumb-' + ts);
+  const vid = document.getElementById('vid-' + ts);
+  if (!thumb.classList.contains('playing')) {
+    vid.src = '/video/' + path;
+    vid.play();
+    thumb.classList.add('playing');
+    vid.onended = () => thumb.classList.remove('playing');
   } else {
-    dayNames.forEach(day => {
-      const daySessions = days[day];
-      const agg = dayAgg[day] || {};
+    vid.pause();
+    vid.src = '';
+    thumb.classList.remove('playing');
+  }
+}
 
-      html += `
-        <div class="summary-day">
-          <div class="summary-day-header">
-            <span class="day-name">${fmtDate(day)}</span>
-            <span style="display:flex;gap:1.2rem;align-items:center">
-              <span style="font-size:0.75rem;color:#94a3b8">${hms(agg.total_hours || 0)}</span>
-              <span class="day-pay">$${(agg.total_pay || 0).toFixed(2)}</span>
-            </span>
-          </div>
-          <div class="summary-day-body">
-            <!-- Per-session rows -->
-            <div class="summary-row" style="font-weight:600;color:#64748b;font-size:0.72rem;border-bottom:1px solid #1e3a5f;">
-              <span>Arrived</span><span>Departed</span><span>Hours</span>
-              <span style="grid-column:span 1">Peak hrs&nbsp;·&nbsp;Off-peak hrs&nbsp;·&nbsp;Pay</span>
-            </div>
-            ${daySessions.map(s => `
-            <div class="summary-row" style="grid-template-columns:1fr 1fr 0.8fr 2fr;">
-              <span>${s.arrival_time   ? fmtTime(s.arrival_time)   : "—"}</span>
-              <span>${s.departure_time ? fmtTime(s.departure_time) : "—"}</span>
-              <span style="color:#f1f5f9">${s.pay ? hms(s.pay.total_hours) : "—"}</span>
-              <span style="color:#94a3b8;font-size:0.72rem;">
-                ${s.pay
-                  ? `<span style="color:#60a5fa">${hms(s.pay.peak_hours)}</span> @ $16
-                     &nbsp;+&nbsp;
-                     <span style="color:#94a3b8">${hms(s.pay.off_peak_hours)}</span> @ $10
-                     &nbsp;=&nbsp;
-                     <strong style="color:#4ade80">$${s.pay.total_pay.toFixed(2)}</strong>`
-                  : "—"}
-              </span>
-            </div>`).join("")}
+function markArrived(ts, path, dt) {
+  if (sel.arrived?.path === path) { sel.arrived = null; }
+  else { sel.arrived = { ts, path, dt }; }
+  updateBanner();
+  loadClips();
+}
 
-            <!-- Day aggregate footer -->
-            ${daySessions.length > 1 ? `
-            <div class="summary-row" style="
-                grid-template-columns:1fr 1fr 0.8fr 2fr;
-                border-top:1px solid #334155;
-                margin-top:0.15rem;
-                padding-top:0.3rem;
-                font-weight:700;
-                font-size:0.78rem;
-                color:#f1f5f9;">
-              <span style="color:#64748b">Day total</span>
-              <span></span>
-              <span>${hms(agg.total_hours || 0)}</span>
-              <span>
-                <span style="color:#60a5fa">${hms(agg.peak_hours || 0)}</span> @ $16
-                &nbsp;+&nbsp;
-                <span style="color:#94a3b8">${hms(agg.off_peak_hours || 0)}</span> @ $10
-                &nbsp;=&nbsp;
-                <strong style="color:#4ade80">$${(agg.total_pay || 0).toFixed(2)}</strong>
-              </span>
-            </div>` : ""}
-          </div>
-        </div>`;
+function markDeparted(ts, path, dt) {
+  if (sel.departed?.path === path) { sel.departed = null; }
+  else { sel.departed = { ts, path, dt }; }
+  updateBanner();
+  loadClips();
+}
+
+async function updateBanner() {
+  const banner = document.getElementById('banner');
+  const saveBtn = document.getElementById('save-btn');
+  const txt = document.getElementById('banner-text');
+
+  if (!sel.arrived && !sel.departed) {
+    banner.classList.remove('show');
+    return;
+  }
+  banner.classList.add('show');
+
+  if (sel.arrived && sel.departed) {
+    const res = await fetch(`/api/preview?arrived=${sel.arrived.dt}&departed=${sel.departed.dt}`);
+    const p = await res.json();
+    if (p.error) { txt.textContent = 'Error: ' + p.error; saveBtn.disabled = true; return; }
+    txt.innerHTML = `<b>${fmtHrs(p.hours_total)}</b> &nbsp;|&nbsp;
+      Peak ${fmtHrs(p.hours_peak)} × $16 = <b>${fmtPay(p.pay_peak)}</b> &nbsp;|&nbsp;
+      Off-peak ${fmtHrs(p.hours_offpeak)} × $10 = <b>${fmtPay(p.pay_offpeak)}</b> &nbsp;|&nbsp;
+      Total: <b>${fmtPay(p.pay_total)}</b>`;
+    saveBtn.disabled = false;
+  } else {
+    txt.textContent = sel.arrived
+      ? `Arrived at ${fmtTime(sel.arrived.dt)} — now select departure clip.`
+      : `Departed at ${fmtTime(sel.departed.dt)} — now select arrival clip.`;
+    saveBtn.disabled = true;
+  }
+}
+
+async function saveSession() {
+  if (!sel.arrived || !sel.departed) return;
+  const body = {
+    arrived: sel.arrived.dt,
+    departed: sel.departed.dt,
+    arrived_clip: sel.arrived.path,
+    departed_clip: sel.departed.path,
+  };
+  const res = await fetch('/api/sessions', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (res.ok) { clearSelection(); loadClips(); }
+  else { alert('Failed to save session: ' + await res.text()); }
+}
+
+function clearSelection() {
+  sel = { arrived: null, departed: null };
+  updateBanner();
+  loadClips();
+}
+
+// ── Sessions ───────────────────────────────────────────────────────────────
+async function loadSessions() {
+  const week = document.getElementById('session-week-select').value;
+  const rows = await fetch(`/api/sessions?week=${week}`).then(r => r.json());
+  const tbody = document.getElementById('sessions-body');
+
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No sessions this week.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(r => `<tr>
+    <td>${r.date}</td>
+    <td>${fmtTime(r.arrived)}</td>
+    <td>${fmtTime(r.departed)}</td>
+    <td>${fmtHrs(r.hours_total)}</td>
+    <td><b>${fmtPay(r.pay_total)}</b>
+      <small style="color:var(--muted);display:block">
+        ${fmtPay(r.pay_peak)} peak + ${fmtPay(r.pay_offpeak)} off-peak
+      </small></td>
+    <td><button class="del-btn" onclick="deleteSession(${r.id})" title="Delete">✕</button></td>
+  </tr>`).join('');
+}
+
+async function deleteSession(id) {
+  if (!confirm('Delete this session?')) return;
+  await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
+  loadSessions();
+}
+
+// ── Summary ────────────────────────────────────────────────────────────────
+async function loadSummary() {
+  const week = document.getElementById('summary-week-select').value;
+  const data = await fetch(`/api/weekly-summary?week=${week}`).then(r => r.json());
+  const { by_date, totals } = data;
+
+  document.getElementById('summary-totals').innerHTML = `
+    <div class="stat-card"><div class="label">Total Pay</div><div class="value">${fmtPay(totals.pay_total)}</div></div>
+    <div class="stat-card"><div class="label">Total Hours</div><div class="value">${totals.hours_total.toFixed(2)}</div></div>
+    <div class="stat-card"><div class="label">Peak Hours</div><div class="value">${totals.hours_peak.toFixed(2)}</div></div>
+    <div class="stat-card"><div class="label">Off-Peak Hours</div><div class="value">${totals.hours_offpeak.toFixed(2)}</div></div>
+  `;
+
+  const tbody = document.getElementById('summary-body');
+  if (!Object.keys(by_date).length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No sessions this week.</td></tr>';
+    return;
+  }
+
+  let html = '';
+  for (const [date, sessions] of Object.entries(by_date).sort()) {
+    const dayTotal = sessions.reduce((a, s) => a + s.pay_total, 0);
+    sessions.forEach((s, i) => {
+      html += `<tr>
+        ${i === 0 ? `<td rowspan="${sessions.length}">${date}</td>` : ''}
+        <td>${fmtTime(s.arrived)}</td>
+        <td>${fmtTime(s.departed)}</td>
+        <td>${s.hours_peak.toFixed(2)}</td>
+        <td>${s.hours_offpeak.toFixed(2)}</td>
+        <td>${s.hours_total.toFixed(2)}</td>
+        <td>${fmtPay(s.pay_total)}</td>
+      </tr>`;
     });
-  }
-
-  el.innerHTML = html;
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Render: Sidebar
-// ────────────────────────────────────────────────────────────────────────────
-function renderSidebarPay() {
-  if (!summary) return;
-  const t = summary.totals;
-  document.getElementById("sb-total").textContent    = `$${t.total_pay.toFixed(2)}`;
-  document.getElementById("sb-hours").textContent    = `${hms(t.total_hours)} total`;
-  document.getElementById("sb-peak-hrs").textContent = hms(t.peak_hours);
-  document.getElementById("sb-peak-pay").textContent = `$${t.peak_pay.toFixed(2)}`;
-  document.getElementById("sb-off-hrs").textContent  = hms(t.off_peak_hours);
-  document.getElementById("sb-off-pay").textContent  = `$${t.off_peak_pay.toFixed(2)}`;
-}
-
-function renderSidebarSessions() {
-  const el = document.getElementById("sidebar-sessions");
-  if (!sessions.length) {
-    el.innerHTML = `<div style="font-size:0.78rem;color:#475569;padding:0.25rem 0;">None yet</div>`;
-    return;
-  }
-  el.innerHTML = sessions.map(s => `
-    <div class="session-item">
-      <span class="s-date">${fmtDate(s.session_date)}</span>
-      <span class="s-time">
-        ${s.arrival_time ? fmtTime(s.arrival_time) : "?"}
-        → ${s.departure_time ? fmtTime(s.departure_time) : "?"}
-      </span>
-      ${s.pay ? `<span class="s-pay">$${s.pay.total_pay.toFixed(2)}</span>` : ""}
-    </div>`).join("");
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Manual pay preview
-// ────────────────────────────────────────────────────────────────────────────
-function updateManualPreview() {
-  const date = document.getElementById("m-date").value;
-  const arr  = document.getElementById("m-arrival").value;
-  const dep  = document.getElementById("m-departure").value;
-  const el   = document.getElementById("manual-pay-preview");
-
-  if (!date || !arr || !dep) { el.textContent = ""; return; }
-
-  const arrISO = `${date}T${arr}`;
-  const depISO = `${date}T${dep}`;
-  const pay = calcPay(arrISO, depISO);
-
-  if (pay.total_hours <= 0) {
-    el.innerHTML = `<span style="color:#ef4444">Departure must be after arrival</span>`;
-    return;
-  }
-
-  el.innerHTML = `
-    <strong style="color:#4ade80;font-size:1rem;">$${pay.total_pay.toFixed(2)}</strong>
-    &nbsp;—&nbsp; ${hms(pay.peak_hours)} @ $16/hr + ${hms(pay.off_peak_hours)} @ $10/hr
-    &nbsp;=&nbsp; ${hms(pay.total_hours)} total`;
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Event delegation: snapshot grid actions
-// ────────────────────────────────────────────────────────────────────────────
-document.getElementById("snapshot-grid").addEventListener("click", e => {
-  const btn = e.target.closest("[data-action]");
-  if (!btn) return;
-  const id  = +btn.dataset.id;
-  const snap = snapshots.find(s => s.id === id);
-  if (!snap) return;
-
-  const action = btn.dataset.action;
-  if (action === "arrival") {
-    selectedArrival = (selectedArrival?.id === id) ? null : snap;
-  } else if (action === "departure") {
-    selectedDeparture = (selectedDeparture?.id === id) ? null : snap;
-  } else if (action === "zoom") {
-    const mediaDiv = document.getElementById("lightbox-media");
-    const isVideo = btn.dataset.mediaType === "video";
-    if (isVideo) {
-      mediaDiv.innerHTML = `<video src="/api/snapshots/${id}/video"
-        controls autoplay muted playsinline
-        style="max-width:80vw;max-height:70vh;border-radius:0.5rem;display:block;"></video>`;
-    } else {
-      mediaDiv.innerHTML = `<img src="/api/snapshots/${id}/image" alt="Snapshot" />`;
+    if (sessions.length > 1) {
+      html += `<tr style="background:#f8fafc;font-weight:600">
+        <td colspan="5" style="text-align:right">Day total</td>
+        <td>${fmtPay(dayTotal)}</td>
+      </tr>`;
     }
-    document.getElementById("lightbox-info").textContent = fmt(snap.ts);
-    document.getElementById("lightbox").classList.add("open");
-    return;
   }
-  renderSnapshotGrid();
-});
-
-// ────────────────────────────────────────────────────────────────────────────
-// Save session from selected snapshots
-// ────────────────────────────────────────────────────────────────────────────
-document.getElementById("btn-save-session").addEventListener("click", async () => {
-  if (!selectedArrival || !selectedDeparture) {
-    toast("Select both an arrival and a departure snapshot first.", true);
-    return;
-  }
-  const arr = new Date(selectedArrival.ts);
-  const dep = new Date(selectedDeparture.ts);
-  if (dep <= arr) {
-    toast("Departure must be after arrival.", true);
-    return;
-  }
-
-  const date = arr.toISOString().slice(0, 10);
-  const body = {
-    session_date:      date,
-    arrival_time:      selectedArrival.ts,
-    departure_time:    selectedDeparture.ts,
-    arrival_snapshot:  selectedArrival.filename,
-    departure_snapshot: selectedDeparture.filename,
-  };
-
-  try {
-    await api("/api/sessions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    toast("Session saved!");
-    selectedArrival = null;
-    selectedDeparture = null;
-    await loadAll();
-    renderSnapshotGrid();
-    // Switch to sessions tab
-    document.querySelector('[data-tab="sessions"]').click();
-  } catch (e) {
-    toast("Error: " + e.message, true);
-  }
-});
-
-document.getElementById("btn-clear-selection").addEventListener("click", () => {
-  selectedArrival = null;
-  selectedDeparture = null;
-  renderSnapshotGrid();
-});
-
-// ────────────────────────────────────────────────────────────────────────────
-// Sessions tab: delete
-// ────────────────────────────────────────────────────────────────────────────
-document.getElementById("sessions-list").addEventListener("click", async e => {
-  const btn = e.target.closest("[data-action='delete']");
-  if (!btn) return;
-  if (!confirm("Delete this session?")) return;
-  try {
-    await api(`/api/sessions/${btn.dataset.id}`, { method: "DELETE" });
-    toast("Session deleted.");
-    await loadAll();
-  } catch (e) {
-    toast("Error: " + e.message, true);
-  }
-});
-
-// ────────────────────────────────────────────────────────────────────────────
-// Manual entry
-// ────────────────────────────────────────────────────────────────────────────
-["m-date", "m-arrival", "m-departure"].forEach(id =>
-  document.getElementById(id).addEventListener("change", updateManualPreview)
-);
-
-document.getElementById("btn-manual-save").addEventListener("click", async () => {
-  const date = document.getElementById("m-date").value;
-  const arr  = document.getElementById("m-arrival").value;
-  const dep  = document.getElementById("m-departure").value;
-  const note = document.getElementById("m-notes").value;
-
-  if (!date || !arr || !dep) {
-    toast("Date, arrival and departure are required.", true);
-    return;
-  }
-
-  const body = {
-    session_date:   date,
-    arrival_time:   `${date}T${arr}`,
-    departure_time: `${date}T${dep}`,
-    notes: note,
-  };
-
-  try {
-    await api("/api/sessions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    toast("Session saved!");
-    document.getElementById("m-date").value    = "";
-    document.getElementById("m-arrival").value = "";
-    document.getElementById("m-departure").value = "";
-    document.getElementById("m-notes").value   = "";
-    document.getElementById("manual-pay-preview").textContent = "";
-    await loadAll();
-    document.querySelector('[data-tab="sessions"]').click();
-  } catch (e) {
-    toast("Error: " + e.message, true);
-  }
-});
-
-document.getElementById("btn-manual-clear").addEventListener("click", () => {
-  ["m-date","m-arrival","m-departure","m-notes"].forEach(id =>
-    document.getElementById(id).value = ""
-  );
-  document.getElementById("manual-pay-preview").textContent = "";
-});
-
-// ────────────────────────────────────────────────────────────────────────────
-// Snapshot filters
-// ────────────────────────────────────────────────────────────────────────────
-document.getElementById("btn-filter-snaps").addEventListener("click", () => {
-  const d = document.getElementById("snap-date-filter").value;
-  loadSnapshots(d || undefined);
-});
-
-document.getElementById("btn-show-week").addEventListener("click", () => {
-  document.getElementById("snap-date-filter").value = "";
-  loadSnapshots();
-});
-
-// ────────────────────────────────────────────────────────────────────────────
-// Refresh
-// ────────────────────────────────────────────────────────────────────────────
-document.getElementById("btn-refresh").addEventListener("click", async () => {
-  try {
-    await api("/api/snapshots/refresh", { method: "POST" });
-    toast("Refreshed from HA and disk.");
-    await loadAll();
-  } catch (e) {
-    toast("Refresh error: " + e.message, true);
-  }
-});
-
-// ────────────────────────────────────────────────────────────────────────────
-// Week navigation
-// ────────────────────────────────────────────────────────────────────────────
-document.getElementById("prev-week").addEventListener("click", () => changeWeek(-1));
-document.getElementById("next-week").addEventListener("click", () => changeWeek(+1));
-
-// ────────────────────────────────────────────────────────────────────────────
-// Tabs
-// ────────────────────────────────────────────────────────────────────────────
-document.querySelectorAll(".tab-btn").forEach(btn => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
-    document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
-    btn.classList.add("active");
-    document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
-  });
-});
-
-// ────────────────────────────────────────────────────────────────────────────
-// Lightbox
-// ────────────────────────────────────────────────────────────────────────────
-function closeLightbox() {
-  document.getElementById("lightbox").classList.remove("open");
-  // Stop any playing video to avoid audio continuing in background
-  const v = document.querySelector("#lightbox-media video");
-  if (v) { v.pause(); v.src = ""; }
-}
-document.getElementById("lightbox-close").addEventListener("click", closeLightbox);
-document.getElementById("lightbox").addEventListener("click", e => {
-  if (e.target === document.getElementById("lightbox")) closeLightbox();
-});
-
-// ────────────────────────────────────────────────────────────────────────────
-// Init
-// ────────────────────────────────────────────────────────────────────────────
-async function init() {
-  try {
-    const data = await api("/api/current_week");
-    currentWeek = data.week;
-  } catch {
-    currentWeek = isoWeek(new Date());
-  }
-  document.getElementById("week-label").textContent = weekLabel(currentWeek);
-
-  // Default manual date to today
-  const today = new Date().toISOString().slice(0, 10);
-  document.getElementById("m-date").value = today;
-
-  await loadAll();
+  tbody.innerHTML = html;
 }
 
-init();
+// ── Manual entry ───────────────────────────────────────────────────────────
+async function calcPreview() {
+  const date = document.getElementById('m-date').value;
+  const arr = document.getElementById('m-arrived').value;
+  const dep = document.getElementById('m-departed').value;
+  const box = document.getElementById('preview-box');
+  const saveBtn = document.getElementById('m-save-btn');
+  if (!date || !arr || !dep) { box.classList.remove('show'); saveBtn.disabled = true; return; }
+
+  const res = await fetch(`/api/preview?arrived=${date}T${arr}&departed=${date}T${dep}`);
+  const p = await res.json();
+  if (p.error) { box.classList.remove('show'); saveBtn.disabled = true; return; }
+
+  document.getElementById('p-peak-hrs').textContent = fmtHrs(p.hours_peak);
+  document.getElementById('p-peak-pay').textContent = fmtPay(p.pay_peak);
+  document.getElementById('p-op-hrs').textContent = fmtHrs(p.hours_offpeak);
+  document.getElementById('p-op-pay').textContent = fmtPay(p.pay_offpeak);
+  document.getElementById('p-total').textContent = fmtPay(p.pay_total);
+  box.classList.add('show');
+  saveBtn.disabled = false;
+}
+
+async function saveManual() {
+  const date = document.getElementById('m-date').value;
+  const arr = document.getElementById('m-arrived').value;
+  const dep = document.getElementById('m-departed').value;
+  const body = { arrived: `${date}T${arr}`, departed: `${date}T${dep}` };
+  const res = await fetch('/api/sessions', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (res.ok) {
+    document.getElementById('m-date').value = '';
+    document.getElementById('m-arrived').value = '';
+    document.getElementById('m-departed').value = '';
+    document.getElementById('preview-box').classList.remove('show');
+    document.getElementById('m-save-btn').disabled = true;
+    alert('Session saved!');
+  } else { alert('Failed: ' + await res.text()); }
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+(async () => {
+  await loadWeeks();
+  // Set today's date as default for manual entry
+  document.getElementById('m-date').value = new Date().toISOString().slice(0, 10);
+  loadClips();
+})();
 </script>
 </body>
 </html>
