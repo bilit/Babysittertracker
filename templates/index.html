@@ -239,7 +239,7 @@ function fmtHrs(h) { return h.toFixed(2) + ' hrs'; }
 function fmtPay(p) { return '$' + p.toFixed(2); }
 
 async function loadWeeks() {
-  const res = await fetch('/api/clips/weeks');
+  const res = await fetch('api/clips/weeks');
   allWeeks = await res.json();
   const now = isoWeek();
   if (!allWeeks.includes(now)) allWeeks.unshift(now);
@@ -256,7 +256,7 @@ async function loadWeeks() {
 async function loadClips() {
   const week = document.getElementById('week-select').value;
   const date = document.getElementById('date-filter').value;
-  let url = `/api/clips?week=${week}`;
+  let url = `api/clips?week=${week}`;
   if (date) url += `&date=${date}`;
 
   const clips = await fetch(url).then(r => r.json());
@@ -270,7 +270,7 @@ async function loadClips() {
   grid.innerHTML = clips.map(c => `
     <div class="clip-card ${sel.arrived?.path===c.path?'arrived':''} ${sel.departed?.path===c.path?'departed':''}" id="card-${c.ts}">
       <div class="clip-thumb" id="thumb-${c.ts}" onclick="togglePlay('${c.ts}','${c.path}')">
-        <img src="/thumb/${c.path}" onerror="this.style.display='none'" alt="">
+        <img src="thumb/${c.path}" onerror="this.style.display='none'" alt="">
         <video id="vid-${c.ts}" preload="none" muted playsinline></video>
         <div class="play-icon"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
       </div>
@@ -296,7 +296,7 @@ function togglePlay(ts, path) {
   const thumb = document.getElementById('thumb-' + ts);
   const vid = document.getElementById('vid-' + ts);
   if (!thumb.classList.contains('playing')) {
-    vid.src = '/video/' + path;
+    vid.src = 'video/' + path;
     vid.play();
     thumb.classList.add('playing');
     vid.onended = () => thumb.classList.remove('playing');
@@ -333,7 +333,7 @@ async function updateBanner() {
   banner.classList.add('show');
 
   if (sel.arrived && sel.departed) {
-    const res = await fetch(`/api/preview?arrived=${sel.arrived.dt}&departed=${sel.departed.dt}`);
+    const res = await fetch(`api/preview?arrived=${sel.arrived.dt}&departed=${sel.departed.dt}`);
     const p = await res.json();
     if (p.error) { txt.textContent = 'Error: ' + p.error; saveBtn.disabled = true; return; }
     txt.innerHTML = `<b>${fmtHrs(p.hours_total)}</b> &nbsp;|&nbsp;
@@ -357,7 +357,7 @@ async function saveSession() {
     arrived_clip: sel.arrived.path,
     departed_clip: sel.departed.path,
   };
-  const res = await fetch('/api/sessions', { method: 'POST',
+  const res = await fetch('api/sessions', { method: 'POST',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (res.ok) { clearSelection(); loadClips(); }
   else { alert('Failed to save session: ' + await res.text()); }
@@ -372,7 +372,7 @@ function clearSelection() {
 // ── Sessions ───────────────────────────────────────────────────────────────
 async function loadSessions() {
   const week = document.getElementById('session-week-select').value;
-  const rows = await fetch(`/api/sessions?week=${week}`).then(r => r.json());
+  const rows = await fetch(`api/sessions?week=${week}`).then(r => r.json());
   const tbody = document.getElementById('sessions-body');
 
   if (!rows.length) {
@@ -394,14 +394,14 @@ async function loadSessions() {
 
 async function deleteSession(id) {
   if (!confirm('Delete this session?')) return;
-  await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
+  await fetch(`api/sessions/${id}`, { method: 'DELETE' });
   loadSessions();
 }
 
 // ── Summary ────────────────────────────────────────────────────────────────
 async function loadSummary() {
   const week = document.getElementById('summary-week-select').value;
-  const data = await fetch(`/api/weekly-summary?week=${week}`).then(r => r.json());
+  const data = await fetch(`api/weekly-summary?week=${week}`).then(r => r.json());
   const { by_date, totals } = data;
 
   document.getElementById('summary-totals').innerHTML = `
@@ -450,7 +450,7 @@ async function calcPreview() {
   const saveBtn = document.getElementById('m-save-btn');
   if (!date || !arr || !dep) { box.classList.remove('show'); saveBtn.disabled = true; return; }
 
-  const res = await fetch(`/api/preview?arrived=${date}T${arr}&departed=${date}T${dep}`);
+  const res = await fetch(`api/preview?arrived=${date}T${arr}&departed=${date}T${dep}`);
   const p = await res.json();
   if (p.error) { box.classList.remove('show'); saveBtn.disabled = true; return; }
 
@@ -468,7 +468,7 @@ async function saveManual() {
   const arr = document.getElementById('m-arrived').value;
   const dep = document.getElementById('m-departed').value;
   const body = { arrived: `${date}T${arr}`, departed: `${date}T${dep}` };
-  const res = await fetch('/api/sessions', { method: 'POST',
+  const res = await fetch('api/sessions', { method: 'POST',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (res.ok) {
     document.getElementById('m-date').value = '';
