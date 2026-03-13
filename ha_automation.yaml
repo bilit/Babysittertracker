@@ -1,18 +1,24 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # Home Assistant Automation — Save doorbell snapshot on person detection
 #
-# Add this to your automations.yaml (or paste into the HA automation UI).
-# Adjust entity IDs to match your Nest doorbell.
+# Paste this into Settings → Automations → + Create Automation → Edit in YAML.
+#
+# IMPORTANT: replace the two entity IDs with your actual Nest entities.
+# Find them at: Settings → Devices & Services → Google Nest → your doorbell
+#
+# Choose the filename path for your deployment:
+#   - HA Add-on:         /share/babysitter_snapshots/doorbell_....jpg
+#   - Standalone Docker: /config/www/snapshots/doorbell_....jpg
 # ──────────────────────────────────────────────────────────────────────────────
 
 alias: "Save doorbell snapshot on person detected"
 description: >
-  When the Nest doorbell detects a person, save a timestamped JPEG to
-  /config/www/snapshots/ so the Babysitter Tracker can display it.
+  When the Nest doorbell detects a person, save a timestamped JPEG so the
+  Babysitter Tracker can display it.
 
 trigger:
   - platform: state
-    entity_id: binary_sensor.front_door_person   # ← change to your sensor
+    entity_id: binary_sensor.front_door_person    # ← CHANGE to your sensor
     to: "on"
 
 condition: []
@@ -20,10 +26,15 @@ condition: []
 action:
   - service: camera.snapshot
     target:
-      entity_id: camera.front_door               # ← change to your camera
+      entity_id: camera.front_door               # ← CHANGE to your camera
     data:
+      # ── For HA Add-on deployment ──────────────────────────────────────────
       filename: >-
-        /config/www/snapshots/doorbell_{{ now().strftime('%Y%m%d_%H%M%S') }}.jpg
+        /share/babysitter_snapshots/doorbell_{{ now().strftime('%Y%m%d_%H%M%S') }}.jpg
+
+      # ── For standalone Docker deployment (comment the above, uncomment below)
+      # filename: >-
+      #   /config/www/snapshots/doorbell_{{ now().strftime('%Y%m%d_%H%M%S') }}.jpg
 
 mode: queued
 max: 10

@@ -17,8 +17,11 @@ app = Flask(__name__)
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-HA_URL = os.getenv("HA_URL", "http://homeassistant.local:8123").rstrip("/")
-HA_TOKEN = os.getenv("HA_TOKEN", "")
+# When running as an HA add-on, SUPERVISOR_TOKEN is injected automatically
+# and the API is reachable at http://supervisor/core.
+# For standalone Docker / direct use, set HA_URL + HA_TOKEN in your .env.
+HA_URL = os.getenv("HA_URL", "http://supervisor/core").rstrip("/")
+HA_TOKEN = os.getenv("HA_TOKEN") or os.getenv("SUPERVISOR_TOKEN", "")
 SNAPSHOT_DIR = os.getenv("SNAPSHOT_DIR", "/config/www/snapshots")
 CAMERA_ENTITY = os.getenv("CAMERA_ENTITY", "camera.doorbell")
 PERSON_SENSOR = os.getenv("PERSON_SENSOR", "binary_sensor.doorbell_person")
