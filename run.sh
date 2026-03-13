@@ -1,9 +1,9 @@
-#!/usr/bin/with-contenv bashio
+#!/bin/sh
 set -e
 
 # Set timezone from add-on config (falls back to env var for Docker Compose mode)
 if [ -f /data/options.json ]; then
-    TZ=$(bashio::config 'timezone')
+    TZ=$(python3 -c "import json; print(json.load(open('/data/options.json')).get('timezone', 'America/New_York'))")
 else
     TZ="${TIMEZONE:-America/New_York}"
 fi
