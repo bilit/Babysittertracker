@@ -35,7 +35,9 @@ options:
   # Accepts either an event entity (newer Nest integration, e.g. event.front_door_bell_motion)
   # or a binary_sensor (older integration, e.g. binary_sensor.front_door_person)
   person_sensor: "event.front_door_bell_motion"
-  snapshot_subdir: "babysitter_snapshots"
+  # Subpath inside /config/ where Nest saves event media clips.
+  # Default works without any automation — HA writes here automatically.
+  snapshot_subdir: "nest/event_media"
   timezone: "America/New_York"
 
 schema:

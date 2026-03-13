@@ -22,7 +22,9 @@ app = Flask(__name__)
 # For standalone Docker / direct use, set HA_URL + HA_TOKEN in your .env.
 HA_URL = os.getenv("HA_URL", "http://supervisor/core").rstrip("/")
 HA_TOKEN = os.getenv("HA_TOKEN") or os.getenv("SUPERVISOR_TOKEN", "")
-SNAPSHOT_DIR = os.getenv("SNAPSHOT_DIR", "/config/www/snapshots")
+# Nest integration saves clips automatically to /config/nest/event_media —
+# no separate automation needed.
+SNAPSHOT_DIR = os.getenv("SNAPSHOT_DIR", "/config/nest/event_media")
 CAMERA_ENTITY = os.getenv("CAMERA_ENTITY", "camera.doorbell")
 PERSON_SENSOR = os.getenv("PERSON_SENSOR", "binary_sensor.doorbell_person")
 DB_PATH = os.getenv("DB_PATH", "babysitter.db")
@@ -65,10 +67,11 @@ def init_db():
             );
 
             CREATE TABLE IF NOT EXISTS snapshots (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                filename  TEXT UNIQUE NOT NULL,
-                ts        TEXT NOT NULL,
-                source    TEXT DEFAULT 'file'
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                filename   TEXT UNIQUE NOT NULL,
+                ts         TEXT NOT NULL,
+                source     TEXT DEFAULT 'file',
+                media_type TEXT DEFAULT 'image'
             );
         """)
 
@@ -91,6 +94,11 @@ def init_db():
                 peak_pay = 0, off_peak_pay = 0, total_pay = 0
             WHERE total_hours IS NULL
         """)
+
+        # Migrate snapshots table: add media_type if missing
+        snap_cols = {row[1] for row in db.execute("PRAGMA table_info(snapshots)")}
+        if "media_type" not in snap_cols:
+            db.execute("ALTER TABLE snapshots ADD COLUMN media_type TEXT DEFAULT 'image'")
 
 
 init_db()
@@ -120,6 +128,7 @@ TIMESTAMP_PATTERNS = [
 ]
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv"}
 
 
 def parse_ts_from_filename(name: str):
@@ -139,23 +148,41 @@ def parse_ts_from_filename(name: str):
 
 
 def scan_snapshots():
-    """Scan SNAPSHOT_DIR and upsert new files into the DB."""
-    snap_path = Path(SNAPSHOT_DIR)
-    if not snap_path.exists():
+    """
+    Recursively scan SNAPSHOT_DIR for images and videos and upsert into the DB.
+
+    The Nest integration stores clips under /config/nest/event_media/ in a
+    nested structure (device_id/YYYY/MM/DD/<uuid>.mp4 or similar), so we walk
+    the whole tree with rglob.  Filenames are stored as paths relative to
+    SNAPSHOT_DIR so they stay portable across remounts.
+    """
+    snap_root = Path(SNAPSHOT_DIR)
+    if not snap_root.exists():
         return
 
     with get_db() as db:
-        for f in snap_path.iterdir():
-            if f.suffix.lower() not in IMAGE_EXTENSIONS:
+        for f in snap_root.rglob("*"):
+            if not f.is_file():
                 continue
+            ext = f.suffix.lower()
+            if ext in IMAGE_EXTENSIONS:
+                media_type = "image"
+            elif ext in VIDEO_EXTENSIONS:
+                media_type = "video"
+            else:
+                continue
+
             ts = parse_ts_from_filename(f.name)
             if ts is None:
                 mtime = f.stat().st_mtime
                 ts = datetime.fromtimestamp(mtime, tz=local_tz())
-            ts_str = ts.isoformat()
+
+            # Store relative path so the DB is portable between mounts
+            rel = str(f.relative_to(snap_root))
             db.execute(
-                "INSERT OR IGNORE INTO snapshots (filename, ts, source) VALUES (?, ?, 'file')",
-                (f.name, ts_str),
+                """INSERT OR IGNORE INTO snapshots (filename, ts, source, media_type)
+                   VALUES (?, ?, 'file', ?)""",
+                (rel, ts.isoformat(), media_type),
             )
 
 
@@ -320,7 +347,7 @@ def list_snapshots():
     date_filter = request.args.get("date")   # YYYY-MM-DD
     week_filter = request.args.get("week")   # YYYY-Www
 
-    query = "SELECT id, filename, ts, source FROM snapshots"
+    query = "SELECT id, filename, ts, source, media_type FROM snapshots"
     params = []
 
     conditions = []
@@ -345,22 +372,54 @@ def list_snapshots():
     return jsonify([dict(r) for r in rows])
 
 
+def _safe_file_path(filename: str) -> Path:
+    """Resolve filename relative to SNAPSHOT_DIR and guard against path traversal."""
+    root = Path(SNAPSHOT_DIR).resolve()
+    candidate = (root / filename).resolve()
+    if not str(candidate).startswith(str(root)):
+        raise ValueError("Path traversal attempt")
+    return candidate
+
+
 @app.route("/api/snapshots/<int:snap_id>/image")
 def snapshot_image(snap_id: int):
+    """Serve a JPEG thumbnail for any snapshot (image or video)."""
     with get_db() as db:
         row = db.execute(
-            "SELECT filename, source FROM snapshots WHERE id = ?", (snap_id,)
+            "SELECT filename, source, media_type FROM snapshots WHERE id = ?", (snap_id,)
         ).fetchone()
 
     if not row:
         return ("Not found", 404)
 
-    filename, source = row["filename"], row["source"]
+    filename   = row["filename"]
+    source     = row["source"]
+    media_type = row["media_type"] or "image"
 
     if source == "file":
-        return send_from_directory(SNAPSHOT_DIR, filename)
+        try:
+            file_path = _safe_file_path(filename)
+        except ValueError:
+            return ("Forbidden", 403)
 
-    # ha_event: proxy the live camera snapshot (best-effort)
+        if media_type == "video":
+            # HA Nest saves a thumbnail.jpg alongside each clip in the same dir
+            for thumb_name in (
+                file_path.stem + ".jpg",       # same name, .jpg extension
+                file_path.stem + ".jpeg",
+                "thumbnail.jpg",               # generic sibling thumbnail
+            ):
+                thumb = file_path.parent / thumb_name
+                if thumb.exists():
+                    return send_file(thumb, mimetype="image/jpeg")
+            # No thumbnail found — tell the frontend to show a video element
+            return ("no-thumbnail", 204)
+
+        if not file_path.is_file():
+            return ("Not found", 404)
+        return send_file(file_path)
+
+    # ha_event source: proxy the live camera frame (best-effort)
     if not HA_TOKEN:
         return ("No HA token configured", 503)
     try:
@@ -370,6 +429,30 @@ def snapshot_image(snap_id: int):
         return Response(r.content, content_type=r.headers.get("Content-Type", "image/jpeg"))
     except Exception as exc:
         return (f"Could not fetch camera snapshot: {exc}", 502)
+
+
+@app.route("/api/snapshots/<int:snap_id>/video")
+def snapshot_video(snap_id: int):
+    """Stream the raw video file for a video snapshot."""
+    with get_db() as db:
+        row = db.execute(
+            "SELECT filename, source, media_type FROM snapshots WHERE id = ?", (snap_id,)
+        ).fetchone()
+
+    if not row or (row["media_type"] or "image") != "video":
+        return ("Not a video", 404)
+
+    try:
+        file_path = _safe_file_path(row["filename"])
+    except ValueError:
+        return ("Forbidden", 403)
+
+    if not file_path.is_file():
+        return ("Not found", 404)
+
+    ext = file_path.suffix.lower()
+    mime = "video/quicktime" if ext == ".mov" else "video/mp4"
+    return send_file(file_path, mimetype=mime)
 
 
 # ---------------------------------------------------------------------------

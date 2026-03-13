@@ -13,20 +13,19 @@ if [ -f /data/options.json ]; then
 
     # Read user options set in the HA add-on UI
     CAMERA_ENTITY=$(jq --raw-output '.camera_entity // "camera.front_door"'       /data/options.json)
-    PERSON_SENSOR=$(jq --raw-output '.person_sensor // "binary_sensor.front_door_person"' /data/options.json)
-    SNAPSHOT_SUBDIR=$(jq --raw-output '.snapshot_subdir // "babysitter_snapshots"' /data/options.json)
-    TIMEZONE=$(jq --raw-output '.timezone // "America/New_York"'                   /data/options.json)
+    PERSON_SENSOR=$(jq --raw-output '.person_sensor // "event.front_door_bell_motion"' /data/options.json)
+    SNAPSHOT_SUBDIR=$(jq --raw-output '.snapshot_subdir // "nest/event_media"'         /data/options.json)
+    TIMEZONE=$(jq --raw-output '.timezone // "America/New_York"'                       /data/options.json)
 
     export CAMERA_ENTITY
     export PERSON_SENSOR
-    export SNAPSHOT_DIR="/share/${SNAPSHOT_SUBDIR}"
+    # Nest saves clips to /config/nest/event_media — accessible via config:ro mount
+    export SNAPSHOT_DIR="/config/${SNAPSHOT_SUBDIR}"
     export TIMEZONE
     export DB_PATH="/data/babysitter.db"
     export PORT=5050
 
-    # Ensure the shared snapshot folder exists
-    mkdir -p "${SNAPSHOT_DIR}"
-    echo "[babysitter-tracker] Snapshots folder: ${SNAPSHOT_DIR}"
+    echo "[babysitter-tracker] Clips folder: ${SNAPSHOT_DIR}"
     echo "[babysitter-tracker] Camera entity:     ${CAMERA_ENTITY}"
     echo "[babysitter-tracker] Person sensor:     ${PERSON_SENSOR}"
 fi

@@ -415,7 +415,13 @@
       overflow: auto;
       position: relative;
     }
-    .modal img { max-width: 80vw; max-height: 70vh; border-radius: 0.5rem; }
+    .modal img, .modal video { max-width: 80vw; max-height: 70vh; border-radius: 0.5rem; display: block; }
+    .video-badge {
+      position: absolute; top: 0.3rem; right: 0.3rem;
+      background: rgba(0,0,0,0.6); color: #fff;
+      font-size: 0.65rem; font-weight: 700; padding: 0.15rem 0.35rem;
+      border-radius: 0.2rem; pointer-events: none;
+    }
     .modal-close {
       position: absolute;
       top: 0.75rem; right: 0.75rem;
@@ -616,7 +622,7 @@
 <div class="modal-overlay" id="lightbox">
   <div class="modal">
     <button class="modal-close" id="lightbox-close">&times;</button>
-    <img id="lightbox-img" src="" alt="Snapshot" />
+    <div id="lightbox-media"></div>
     <div id="lightbox-info" style="margin-top:0.5rem;font-size:0.8rem;color:#94a3b8;text-align:center;"></div>
   </div>
 </div>
@@ -796,18 +802,20 @@ function renderSnapshotGrid() {
   const count = document.getElementById("snap-count");
 
   if (!snapshots.length) {
-    grid.innerHTML = `<div class="empty-state">No person-detection snapshots found for this period.<br>
-      Make sure your snapshot directory is configured and HA is capturing images on person detection.</div>`;
+    grid.innerHTML = `<div class="empty-state">No clips found for this period.<br>
+      Make sure <strong>SNAPSHOT_DIR</strong> points to your HA Nest event_media folder<br>
+      (default: <code>/config/nest/event_media</code>) and events have been triggered.</div>`;
     count.textContent = "";
     return;
   }
 
-  count.textContent = `${snapshots.length} snapshot${snapshots.length !== 1 ? "s" : ""}`;
+  count.textContent = `${snapshots.length} clip${snapshots.length !== 1 ? "s" : ""}`;
   grid.innerHTML = "";
 
   snapshots.forEach(snap => {
     const isArr = selectedArrival  && selectedArrival.id  === snap.id;
     const isDep = selectedDeparture && selectedDeparture.id === snap.id;
+    const isVideo = snap.media_type === "video";
 
     const card = document.createElement("div");
     card.className = "snap-card" + (isArr ? " selected-arrival" : isDep ? " selected-departure" : "");
@@ -815,12 +823,23 @@ function renderSnapshotGrid() {
 
     const d = new Date(snap.ts);
 
+    // For video: show a muted autoplay loop as the thumbnail; fall back to
+    // a poster from /image (which returns 204 if no thumbnail exists).
+    const mediaEl = isVideo
+      ? `<video src="/api/snapshots/${snap.id}/video"
+               poster="/api/snapshots/${snap.id}/image"
+               muted playsinline preload="metadata"
+               style="width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:#0f172a;"
+               onerror="this.style.background='#334155'"></video>
+         <span class="video-badge">▶ VIDEO</span>`
+      : `<img src="/api/snapshots/${snap.id}/image" alt="Snapshot"
+              loading="lazy"
+              onerror="this.style.background='#334155';this.alt='No image';" />`;
+
     card.innerHTML = `
       ${isArr ? '<span class="snap-tag arrival">Arrived</span>' : ""}
       ${isDep ? '<span class="snap-tag departure">Departed</span>' : ""}
-      <img src="/api/snapshots/${snap.id}/image" alt="Snapshot"
-           loading="lazy"
-           onerror="this.style.background='#334155';this.alt='No image';" />
+      ${mediaEl}
       <div class="snap-info">
         <div class="snap-time">${d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</div>
         <div>${d.toLocaleDateString([], {weekday:"short",month:"short",day:"numeric"})}</div>
@@ -832,7 +851,10 @@ function renderSnapshotGrid() {
         <button class="btn-departure${isDep ? " picked" : ""}" data-action="departure" data-id="${snap.id}">
           ${isDep ? "✓ Departed" : "Departed"}
         </button>
-        <button style="background:#1e3a5f;color:#93c5fd;flex:0;padding:0.3rem 0.5rem;" data-action="zoom" data-id="${snap.id}" title="View full size">⤢</button>
+        <button style="background:#1e3a5f;color:#93c5fd;flex:0;padding:0.3rem 0.5rem;"
+                data-action="zoom" data-id="${snap.id}"
+                data-media-type="${snap.media_type || 'image'}"
+                title="View full size">⤢</button>
       </div>`;
     grid.appendChild(card);
   });
@@ -1066,7 +1088,15 @@ document.getElementById("snapshot-grid").addEventListener("click", e => {
   } else if (action === "departure") {
     selectedDeparture = (selectedDeparture?.id === id) ? null : snap;
   } else if (action === "zoom") {
-    document.getElementById("lightbox-img").src = `/api/snapshots/${id}/image`;
+    const mediaDiv = document.getElementById("lightbox-media");
+    const isVideo = btn.dataset.mediaType === "video";
+    if (isVideo) {
+      mediaDiv.innerHTML = `<video src="/api/snapshots/${id}/video"
+        controls autoplay muted playsinline
+        style="max-width:80vw;max-height:70vh;border-radius:0.5rem;display:block;"></video>`;
+    } else {
+      mediaDiv.innerHTML = `<img src="/api/snapshots/${id}/image" alt="Snapshot" />`;
+    }
     document.getElementById("lightbox-info").textContent = fmt(snap.ts);
     document.getElementById("lightbox").classList.add("open");
     return;
@@ -1236,12 +1266,15 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 // ────────────────────────────────────────────────────────────────────────────
 // Lightbox
 // ────────────────────────────────────────────────────────────────────────────
-document.getElementById("lightbox-close").addEventListener("click", () =>
-  document.getElementById("lightbox").classList.remove("open")
-);
+function closeLightbox() {
+  document.getElementById("lightbox").classList.remove("open");
+  // Stop any playing video to avoid audio continuing in background
+  const v = document.querySelector("#lightbox-media video");
+  if (v) { v.pause(); v.src = ""; }
+}
+document.getElementById("lightbox-close").addEventListener("click", closeLightbox);
 document.getElementById("lightbox").addEventListener("click", e => {
-  if (e.target === document.getElementById("lightbox"))
-    document.getElementById("lightbox").classList.remove("open");
+  if (e.target === document.getElementById("lightbox")) closeLightbox();
 });
 
 // ────────────────────────────────────────────────────────────────────────────
