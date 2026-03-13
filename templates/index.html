@@ -36,9 +36,29 @@
     border-radius: 6px; font-size: .875rem; background: var(--card); }
   .toolbar label { font-size: .875rem; color: var(--muted); }
 
-  /* ── Grid ── */
-  #clips-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-    gap: 14px; padding: 0 16px 24px; }
+  /* ── Clip sections ── */
+  .clip-section { margin-bottom: 4px; }
+  .section-header {
+    display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+    background: var(--card); border-bottom: 1px solid var(--border);
+    border-top: 3px solid transparent;
+  }
+  .arrival-section .section-header { border-top-color: var(--green); }
+  .departure-section .section-header { border-top-color: var(--orange); }
+  .section-title { font-weight: 700; font-size: .95rem; }
+  .section-window { font-size: .78rem; color: var(--muted); background: #f1f5f9;
+    padding: 2px 8px; border-radius: 20px; white-space: nowrap; }
+  .section-toggle { margin-left: auto; background: none; border: 1px solid var(--border);
+    padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: .78rem;
+    color: var(--primary); white-space: nowrap; }
+  .section-toggle:hover { background: #f1f5f9; }
+  .section-toggle.active { background: #eff6ff; font-weight: 600; }
+
+  /* ── Clip grids ── */
+  #arrival-grid, #departure-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px; padding: 12px 16px;
+  }
 
   /* ── Clip card ── */
   .clip-card { background: var(--card); border-radius: var(--radius); overflow: hidden;
@@ -61,13 +81,33 @@
   .clip-body { padding: 10px 12px; }
   .clip-time { font-weight: 700; font-size: 1rem; }
   .clip-date { font-size: .8rem; color: var(--muted); margin-bottom: 8px; }
-  .clip-actions { display: flex; gap: 6px; }
-  .clip-actions button { flex: 1; padding: 6px 4px; border: none; border-radius: 6px;
-    font-size: .8rem; font-weight: 600; cursor: pointer; transition: opacity .15s; }
-  .btn-arrive { background: #dcfce7; color: #166534; }
-  .btn-arrive.active { background: var(--green); color: #fff; }
-  .btn-depart { background: #ffedd5; color: #9a3412; }
-  .btn-depart.active { background: var(--orange); color: #fff; }
+
+  /* ── Select button (single per card, context-aware) ── */
+  .btn-select { width: 100%; padding: 7px 4px; border: none; border-radius: 6px;
+    font-size: .82rem; font-weight: 600; cursor: pointer; transition: all .15s; }
+  .arrival-section .btn-select { background: #dcfce7; color: #166534; }
+  .arrival-section .btn-select.selected { background: var(--green); color: #fff; }
+  .departure-section .btn-select { background: #ffedd5; color: #9a3412; }
+  .departure-section .btn-select.selected { background: var(--orange); color: #fff; }
+
+  /* ── Inline manual entry ── */
+  .inline-manual {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 8px 16px; background: #f8fafc; border-bottom: 1px solid var(--border);
+    font-size: .82rem;
+  }
+  .inline-manual .no-clip-label { color: var(--muted); white-space: nowrap; font-style: italic; }
+  .inline-manual input[type=date], .inline-manual input[type=time] {
+    padding: 4px 7px; border: 1px solid var(--border);
+    border-radius: 6px; font-size: .82rem; background: var(--card);
+  }
+  .inline-manual .set-btn { padding: 4px 12px; border: none; border-radius: 6px;
+    font-size: .82rem; font-weight: 600; cursor: pointer; color: #fff; }
+  .arrival-section .set-btn { background: var(--green); }
+  .departure-section .set-btn { background: var(--orange); }
+  .manual-status { font-size: .82rem; font-weight: 600; color: var(--green); }
+  .manual-clear { background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: .82rem; text-decoration: underline; padding: 0; }
 
   /* ── Sessions table ── */
   .section { padding: 16px; }
@@ -85,7 +125,7 @@
   .stat-card .label { font-size: .78rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
   .stat-card .value { font-size: 1.6rem; font-weight: 700; margin-top: 4px; }
 
-  /* ── Manual entry ── */
+  /* ── Manual entry tab ── */
   .form-card { background: var(--card); border-radius: var(--radius); padding: 20px; max-width: 420px; }
   .form-row { margin-bottom: 14px; }
   .form-row label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 4px; }
@@ -100,13 +140,13 @@
     border-radius: 8px; font-size: .95rem; font-weight: 600; cursor: pointer; }
   .btn-primary:disabled { opacity: .5; cursor: default; }
 
-  .empty { text-align: center; padding: 48px; color: var(--muted); }
+  .empty { text-align: center; padding: 32px; color: var(--muted); }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
 
   @media (max-width: 480px) {
-    #clips-grid { grid-template-columns: 1fr 1fr; }
-    .clip-actions button { font-size: .72rem; }
+    #arrival-grid, #departure-grid { grid-template-columns: 1fr 1fr; }
+    .btn-select { font-size: .72rem; }
   }
 </style>
 </head>
@@ -120,7 +160,7 @@
 </nav>
 
 <div id="banner">
-  <span id="banner-text">Select an arrival and departure clip.</span>
+  <span id="banner-text">Select an arrival and departure.</span>
   <button id="save-btn" disabled onclick="saveSession()">Save Session</button>
   <button class="clear-btn" onclick="clearSelection()">Clear</button>
 </div>
@@ -134,7 +174,42 @@
     <input type="date" id="date-filter" onchange="loadClips()">
     <button onclick="clearDateFilter()" style="font-size:.8rem;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);cursor:pointer">Clear date</button>
   </div>
-  <div id="clips-grid"></div>
+
+  <!-- Arrival Section -->
+  <div class="clip-section arrival-section">
+    <div class="section-header">
+      <span class="section-title">Arrival</span>
+      <span class="section-window" id="arrival-window-label">7:00 AM – 10:00 AM</span>
+      <button class="section-toggle" id="arrival-toggle" onclick="toggleSection('arrival')">Show all times ↓</button>
+    </div>
+    <div id="arrival-grid"></div>
+    <div class="inline-manual">
+      <span class="no-clip-label">No clip?</span>
+      <input type="date" id="arr-date">
+      <input type="time" id="arr-time" step="60">
+      <button class="set-btn" onclick="setManualTime('arrival')">Set Arrival</button>
+      <span class="manual-status" id="arr-manual-status"></span>
+      <button class="manual-clear" id="arr-manual-clear" style="display:none" onclick="clearManual('arrival')">clear</button>
+    </div>
+  </div>
+
+  <!-- Departure Section -->
+  <div class="clip-section departure-section">
+    <div class="section-header">
+      <span class="section-title">Departure</span>
+      <span class="section-window" id="departure-window-label">3:00 PM – 9:00 PM</span>
+      <button class="section-toggle" id="departure-toggle" onclick="toggleSection('departure')">Show all times ↓</button>
+    </div>
+    <div id="departure-grid"></div>
+    <div class="inline-manual">
+      <span class="no-clip-label">No clip?</span>
+      <input type="date" id="dep-date">
+      <input type="time" id="dep-time" step="60">
+      <button class="set-btn" onclick="setManualTime('departure')">Set Departure</button>
+      <span class="manual-status" id="dep-manual-status"></span>
+      <button class="manual-clear" id="dep-manual-clear" style="display:none" onclick="clearManual('departure')">clear</button>
+    </div>
+  </div>
 </div>
 
 <!-- SESSIONS TAB -->
@@ -206,6 +281,14 @@
 let sel = { arrived: null, departed: null };
 let currentWeek = '';
 let allWeeks = [];
+let allClips = [];
+let showAllArrival = false;
+let showAllDeparture = false;
+
+const ARRIVAL_START = 7;    // 7 AM inclusive
+const ARRIVAL_END   = 10;   // 10 AM exclusive
+const DEP_START     = 15;   // 3 PM inclusive
+const DEP_END       = 21;   // 9 PM exclusive
 
 // ── Tab routing ────────────────────────────────────────────────────────────
 function showTab(name) {
@@ -217,7 +300,7 @@ function showTab(name) {
   if (name === 'summary') loadSummary();
 }
 
-// ── Week helpers ───────────────────────────────────────────────────────────
+// ── Formatters ─────────────────────────────────────────────────────────────
 function isoWeek(d) {
   const dt = d ? new Date(d) : new Date();
   const thu = new Date(dt);
@@ -226,18 +309,16 @@ function isoWeek(d) {
   const week = 1 + Math.round(((thu - jan4) / 86400000 - 3 + (jan4.getDay() + 6) % 7) / 7);
   return `${thu.getFullYear()}-W${String(week).padStart(2, '0')}`;
 }
-
 function fmtTime(iso) {
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 function fmtDate(iso) {
-  const d = new Date(iso);
-  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  return new Date(iso).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 }
 function fmtHrs(h) { return h.toFixed(2) + ' hrs'; }
 function fmtPay(p) { return '$' + p.toFixed(2); }
 
+// ── Weeks ──────────────────────────────────────────────────────────────────
 async function loadWeeks() {
   const res = await fetch('api/clips/weeks');
   allWeeks = await res.json();
@@ -245,8 +326,8 @@ async function loadWeeks() {
   if (!allWeeks.includes(now)) allWeeks.unshift(now);
 
   ['week-select', 'session-week-select', 'summary-week-select'].forEach(id => {
-    const sel = document.getElementById(id);
-    sel.innerHTML = allWeeks.map(w =>
+    const el = document.getElementById(id);
+    el.innerHTML = allWeeks.map(w =>
       `<option value="${w}" ${w === now ? 'selected' : ''}>${w}</option>`).join('');
   });
   currentWeek = now;
@@ -258,43 +339,138 @@ async function loadClips() {
   const date = document.getElementById('date-filter').value;
   let url = `api/clips?week=${week}`;
   if (date) url += `&date=${date}`;
+  allClips = await fetch(url).then(r => r.json());
 
-  const clips = await fetch(url).then(r => r.json());
-  const grid = document.getElementById('clips-grid');
+  // Pre-fill manual date fields
+  const today = new Date().toISOString().slice(0, 10);
+  const defaultDate = date || today;
+  document.getElementById('arr-date').value = defaultDate;
+  document.getElementById('dep-date').value = defaultDate;
+
+  renderSections();
+}
+
+function getHour(isoStr) {
+  return new Date(isoStr).getHours();
+}
+
+function renderSections() {
+  const arrClips = showAllArrival
+    ? allClips
+    : allClips.filter(c => { const h = getHour(c.datetime); return h >= ARRIVAL_START && h < ARRIVAL_END; });
+
+  const depClips = showAllDeparture
+    ? allClips
+    : allClips.filter(c => { const h = getHour(c.datetime); return h >= DEP_START && h < DEP_END; });
+
+  renderSection('arrival', arrClips);
+  renderSection('departure', depClips);
+}
+
+function renderSection(type, clips) {
+  const isArrival = type === 'arrival';
+  const prefix = isArrival ? 'arr' : 'dep';
+  const showAll = isArrival ? showAllArrival : showAllDeparture;
+  const grid = document.getElementById(`${type}-grid`);
+  const toggle = document.getElementById(`${type}-toggle`);
+
+  // Update toggle button
+  if (showAll) {
+    toggle.textContent = isArrival ? '7–10 AM only ↑' : '3–9 PM only ↑';
+    toggle.classList.add('active');
+  } else {
+    toggle.textContent = 'Show all times ↓';
+    toggle.classList.remove('active');
+  }
 
   if (!clips.length) {
-    grid.innerHTML = '<div class="empty" style="grid-column:1/-1">No clips found for this period.<br><small>Make sure your Nest integration is saving event media.</small></div>';
+    const hint = showAll ? 'No clips found for this period.' : `No clips in this time window.`;
+    grid.innerHTML = `<div class="empty">${hint}<br><small style="color:var(--muted)">Use manual entry below or expand to all times.</small></div>`;
     return;
   }
 
-  grid.innerHTML = clips.map(c => `
-    <div class="clip-card ${sel.arrived?.path===c.path?'arrived':''} ${sel.departed?.path===c.path?'departed':''}" id="card-${c.ts}">
-      <div class="clip-thumb" id="thumb-${c.ts}" onclick="togglePlay('${c.ts}','${c.path}')">
-        <img src="thumb/${c.path}" onerror="this.style.display='none'" alt="">
-        <video id="vid-${c.ts}" preload="none" muted playsinline></video>
-        <div class="play-icon"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
-      </div>
-      <div class="clip-body">
-        <div class="clip-time">${c.time}</div>
-        <div class="clip-date">${c.date}</div>
-        <div class="clip-actions">
-          <button class="btn-arrive ${sel.arrived?.path===c.path?'active':''}"
-            onclick="markArrived(${c.ts},'${c.path}','${c.datetime}')">Arrived</button>
-          <button class="btn-depart ${sel.departed?.path===c.path?'active':''}"
-            onclick="markDeparted(${c.ts},'${c.path}','${c.datetime}')">Departed</button>
+  const currentSel = isArrival ? sel.arrived : sel.departed;
+  const selPath = currentSel && !currentSel.manual ? currentSel.path : null;
+
+  grid.innerHTML = clips.map(c => {
+    const isSelected = selPath === c.path;
+    return `
+      <div class="clip-card ${isSelected ? (isArrival ? 'arrived' : 'departed') : ''}" id="${prefix}-card-${c.ts}">
+        <div class="clip-thumb" id="thumb-${prefix}-${c.ts}" onclick="togglePlay('${prefix}-${c.ts}','${c.path}')">
+          <img src="thumb/${c.path}" onerror="this.style.display='none'" alt="">
+          <video id="vid-${prefix}-${c.ts}" preload="none" muted playsinline></video>
+          <div class="play-icon"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
         </div>
-      </div>
-    </div>`).join('');
+        <div class="clip-body">
+          <div class="clip-time">${c.time}</div>
+          <div class="clip-date">${c.date}</div>
+          <button class="btn-select ${isSelected ? 'selected' : ''}"
+            onclick="selectClip('${type}',${c.ts},'${c.path}','${c.datetime}')">
+            ${isSelected ? '&#10003; Selected' : (isArrival ? 'Set as Arrival' : 'Set as Departure')}
+          </button>
+        </div>
+      </div>`;
+  }).join('');
 }
 
-function clearDateFilter() {
-  document.getElementById('date-filter').value = '';
-  loadClips();
+function toggleSection(type) {
+  if (type === 'arrival') showAllArrival = !showAllArrival;
+  else showAllDeparture = !showAllDeparture;
+  renderSections();
 }
 
-function togglePlay(ts, path) {
-  const thumb = document.getElementById('thumb-' + ts);
-  const vid = document.getElementById('vid-' + ts);
+function selectClip(type, ts, path, dt) {
+  const isArrival = type === 'arrival';
+  const current = isArrival ? sel.arrived : sel.departed;
+  const toggled = (current && !current.manual && current.path === path) ? null : { ts, path, dt, manual: false };
+
+  if (isArrival) {
+    sel.arrived = toggled;
+    if (toggled) { document.getElementById('arr-manual-status').textContent = ''; document.getElementById('arr-manual-clear').style.display = 'none'; }
+  } else {
+    sel.departed = toggled;
+    if (toggled) { document.getElementById('dep-manual-status').textContent = ''; document.getElementById('dep-manual-clear').style.display = 'none'; }
+  }
+  updateBanner();
+  renderSections();
+}
+
+function setManualTime(type) {
+  const isArrival = type === 'arrival';
+  const prefix = isArrival ? 'arr' : 'dep';
+  const date = document.getElementById(`${prefix}-date`).value;
+  const time = document.getElementById(`${prefix}-time`).value;
+  if (!date || !time) { alert('Please enter both date and time.'); return; }
+
+  const dt = `${date}T${time}`;
+  const displayTime = new Date(dt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  if (isArrival) {
+    sel.arrived = { dt, manual: true };
+  } else {
+    sel.departed = { dt, manual: true };
+  }
+
+  document.getElementById(`${prefix}-manual-status`).textContent = `\u2713 ${displayTime}`;
+  document.getElementById(`${prefix}-manual-clear`).style.display = '';
+  updateBanner();
+  renderSections();
+}
+
+function clearManual(type) {
+  const isArrival = type === 'arrival';
+  const prefix = isArrival ? 'arr' : 'dep';
+  if (isArrival) sel.arrived = null;
+  else sel.departed = null;
+  document.getElementById(`${prefix}-manual-status`).textContent = '';
+  document.getElementById(`${prefix}-manual-clear`).style.display = 'none';
+  updateBanner();
+  renderSections();
+}
+
+function togglePlay(id, path) {
+  const thumb = document.getElementById('thumb-' + id);
+  const vid = document.getElementById('vid-' + id);
   if (!thumb.classList.contains('playing')) {
     vid.src = 'video/' + path;
     vid.play();
@@ -307,20 +483,7 @@ function togglePlay(ts, path) {
   }
 }
 
-function markArrived(ts, path, dt) {
-  if (sel.arrived?.path === path) { sel.arrived = null; }
-  else { sel.arrived = { ts, path, dt }; }
-  updateBanner();
-  loadClips();
-}
-
-function markDeparted(ts, path, dt) {
-  if (sel.departed?.path === path) { sel.departed = null; }
-  else { sel.departed = { ts, path, dt }; }
-  updateBanner();
-  loadClips();
-}
-
+// ── Banner ─────────────────────────────────────────────────────────────────
 async function updateBanner() {
   const banner = document.getElementById('banner');
   const saveBtn = document.getElementById('save-btn');
@@ -336,15 +499,18 @@ async function updateBanner() {
     const res = await fetch(`api/preview?arrived=${sel.arrived.dt}&departed=${sel.departed.dt}`);
     const p = await res.json();
     if (p.error) { txt.textContent = 'Error: ' + p.error; saveBtn.disabled = true; return; }
-    txt.innerHTML = `<b>${fmtHrs(p.hours_total)}</b> &nbsp;|&nbsp;
-      Peak ${fmtHrs(p.hours_peak)} × $16 = <b>${fmtPay(p.pay_peak)}</b> &nbsp;|&nbsp;
-      Off-peak ${fmtHrs(p.hours_offpeak)} × $10 = <b>${fmtPay(p.pay_offpeak)}</b> &nbsp;|&nbsp;
-      Total: <b>${fmtPay(p.pay_total)}</b>`;
+    const arrLabel = sel.arrived.manual ? ' <em>(manual)</em>' : '';
+    const depLabel = sel.departed.manual ? ' <em>(manual)</em>' : '';
+    txt.innerHTML = `Arrived ${fmtTime(sel.arrived.dt)}${arrLabel} &rarr; Departed ${fmtTime(sel.departed.dt)}${depLabel}
+      &nbsp;|&nbsp; <b>${fmtHrs(p.hours_total)}</b>
+      &nbsp;|&nbsp; Peak ${fmtPay(p.pay_peak)} + Off-peak ${fmtPay(p.pay_offpeak)}
+      &nbsp;=&nbsp; <b>${fmtPay(p.pay_total)}</b>`;
     saveBtn.disabled = false;
+  } else if (sel.arrived) {
+    txt.innerHTML = `Arrived ${fmtTime(sel.arrived.dt)}${sel.arrived.manual ? ' <em>(manual)</em>' : ''} &mdash; now select departure.`;
+    saveBtn.disabled = true;
   } else {
-    txt.textContent = sel.arrived
-      ? `Arrived at ${fmtTime(sel.arrived.dt)} — now select departure clip.`
-      : `Departed at ${fmtTime(sel.departed.dt)} — now select arrival clip.`;
+    txt.innerHTML = `Departed ${fmtTime(sel.departed.dt)}${sel.departed.manual ? ' <em>(manual)</em>' : ''} &mdash; now select arrival.`;
     saveBtn.disabled = true;
   }
 }
@@ -354,18 +520,27 @@ async function saveSession() {
   const body = {
     arrived: sel.arrived.dt,
     departed: sel.departed.dt,
-    arrived_clip: sel.arrived.path,
-    departed_clip: sel.departed.path,
+    arrived_clip: sel.arrived.manual ? null : sel.arrived.path,
+    departed_clip: sel.departed.manual ? null : sel.departed.path,
   };
   const res = await fetch('api/sessions', { method: 'POST',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (res.ok) { clearSelection(); loadClips(); }
+  if (res.ok) { clearSelection(); }
   else { alert('Failed to save session: ' + await res.text()); }
 }
 
 function clearSelection() {
   sel = { arrived: null, departed: null };
+  ['arr', 'dep'].forEach(p => {
+    document.getElementById(`${p}-manual-status`).textContent = '';
+    document.getElementById(`${p}-manual-clear`).style.display = 'none';
+  });
   updateBanner();
+  renderSections();
+}
+
+function clearDateFilter() {
+  document.getElementById('date-filter').value = '';
   loadClips();
 }
 
@@ -388,7 +563,7 @@ async function loadSessions() {
       <small style="color:var(--muted);display:block">
         ${fmtPay(r.pay_peak)} peak + ${fmtPay(r.pay_offpeak)} off-peak
       </small></td>
-    <td><button class="del-btn" onclick="deleteSession(${r.id})" title="Delete">✕</button></td>
+    <td><button class="del-btn" onclick="deleteSession(${r.id})" title="Delete">&#10005;</button></td>
   </tr>`).join('');
 }
 
@@ -441,7 +616,7 @@ async function loadSummary() {
   tbody.innerHTML = html;
 }
 
-// ── Manual entry ───────────────────────────────────────────────────────────
+// ── Manual entry tab ────────────────────────────────────────────────────────
 async function calcPreview() {
   const date = document.getElementById('m-date').value;
   const arr = document.getElementById('m-arrived').value;
@@ -483,7 +658,6 @@ async function saveManual() {
 // ── Init ───────────────────────────────────────────────────────────────────
 (async () => {
   await loadWeeks();
-  // Set today's date as default for manual entry
   document.getElementById('m-date').value = new Date().toISOString().slice(0, 10);
   loadClips();
 })();
