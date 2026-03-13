@@ -1,0 +1,29 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Home Assistant Automation — Save doorbell snapshot on person detection
+#
+# Add this to your automations.yaml (or paste into the HA automation UI).
+# Adjust entity IDs to match your Nest doorbell.
+# ──────────────────────────────────────────────────────────────────────────────
+
+alias: "Save doorbell snapshot on person detected"
+description: >
+  When the Nest doorbell detects a person, save a timestamped JPEG to
+  /config/www/snapshots/ so the Babysitter Tracker can display it.
+
+trigger:
+  - platform: state
+    entity_id: binary_sensor.front_door_person   # ← change to your sensor
+    to: "on"
+
+condition: []
+
+action:
+  - service: camera.snapshot
+    target:
+      entity_id: camera.front_door               # ← change to your camera
+    data:
+      filename: >-
+        /config/www/snapshots/doorbell_{{ now().strftime('%Y%m%d_%H%M%S') }}.jpg
+
+mode: queued
+max: 10

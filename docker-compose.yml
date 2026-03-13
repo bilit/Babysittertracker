@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  babysitter-tracker:
+    build: .
+    container_name: babysitter-tracker
+    restart: unless-stopped
+    ports:
+      - "${PORT:-5050}:5050"
+    env_file:
+      - .env
+    volumes:
+      # Mount your HA snapshot directory (read-only)
+      # Adjust the host path to wherever HA saves person-detection snapshots
+      - /path/to/homeassistant/www/snapshots:/config/www/snapshots:ro
+      # Persistent SQLite database
+      - babysitter_data:/data
+    network_mode: host   # Remove if your HA is not on the host network;
+                         # use bridge + correct HA_URL instead.
+
+volumes:
+  babysitter_data:
