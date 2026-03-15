@@ -358,9 +358,9 @@ function getHour(isoStr) {
 }
 
 function renderSections() {
-  const arrClips = showAllArrival
+  const arrClips = (showAllArrival
     ? allClips
-    : allClips.filter(c => { const h = getHour(c.datetime); return h >= ARRIVAL_START && h < ARRIVAL_END; });
+    : allClips.filter(c => { const h = getHour(c.datetime); return h >= ARRIVAL_START && h < ARRIVAL_END; })).slice().reverse();
 
   const depClips = showAllDeparture
     ? allClips
