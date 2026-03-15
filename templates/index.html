@@ -264,6 +264,9 @@
         <label>Departed</label>
         <input type="time" id="m-departed" oninput="calcPreview()">
       </div>
+      <div id="m-dup-warning" style="display:none;margin-bottom:10px;padding:8px 12px;background:#fff3e0;border:1px solid #e65100;border-radius:6px;color:#e65100;font-size:0.9rem;">
+        &#9888; A session already exists for this date and will be replaced when you save.
+      </div>
       <div class="preview-box" id="preview-box">
         <div class="row"><span>Peak hours (9 AM–3 PM)</span><span id="p-peak-hrs">—</span></div>
         <div class="row"><span>Peak pay ($16/hr)</span><span id="p-peak-pay">—</span></div>
@@ -501,10 +504,19 @@ async function updateBanner() {
     if (p.error) { txt.textContent = 'Error: ' + p.error; saveBtn.disabled = true; return; }
     const arrLabel = sel.arrived.manual ? ' <em>(manual)</em>' : '';
     const depLabel = sel.departed.manual ? ' <em>(manual)</em>' : '';
+
+    // Check if a session already exists for this date
+    const sessionDate = sel.arrived.dt.slice(0, 10);
+    const checkRes = await fetch(`api/sessions/check-date?date=${sessionDate}`);
+    const checkData = await checkRes.json();
+    const dupWarning = checkData.exists
+      ? ` &nbsp;<span style="color:#e65100;font-weight:bold;">&#9888; A session already exists for this date and will be replaced.</span>`
+      : '';
+
     txt.innerHTML = `Arrived ${fmtTime(sel.arrived.dt)}${arrLabel} &rarr; Departed ${fmtTime(sel.departed.dt)}${depLabel}
       &nbsp;|&nbsp; <b>${fmtHrs(p.hours_total)}</b>
       &nbsp;|&nbsp; Peak ${fmtPay(p.pay_peak)} + Off-peak ${fmtPay(p.pay_offpeak)}
-      &nbsp;=&nbsp; <b>${fmtPay(p.pay_total)}</b>`;
+      &nbsp;=&nbsp; <b>${fmtPay(p.pay_total)}</b>${dupWarning}`;
     saveBtn.disabled = false;
   } else if (sel.arrived) {
     txt.innerHTML = `Arrived ${fmtTime(sel.arrived.dt)}${sel.arrived.manual ? ' <em>(manual)</em>' : ''} &mdash; now select departure.`;
@@ -525,8 +537,11 @@ async function saveSession() {
   };
   const res = await fetch('api/sessions', { method: 'POST',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (res.ok) { clearSelection(); }
-  else { alert('Failed to save session: ' + await res.text()); }
+  if (res.ok) {
+    const data = await res.json();
+    clearSelection();
+    if (data.replaced) { alert('The previous session for this date was replaced with the new one.'); }
+  } else { alert('Failed to save session: ' + await res.text()); }
 }
 
 function clearSelection() {
@@ -634,6 +649,13 @@ async function calcPreview() {
   document.getElementById('p-op-hrs').textContent = fmtHrs(p.hours_offpeak);
   document.getElementById('p-op-pay').textContent = fmtPay(p.pay_offpeak);
   document.getElementById('p-total').textContent = fmtPay(p.pay_total);
+
+  // Check for existing session on this date and show warning
+  const checkRes = await fetch(`api/sessions/check-date?date=${date}`);
+  const checkData = await checkRes.json();
+  const dupWarn = document.getElementById('m-dup-warning');
+  if (dupWarn) dupWarn.style.display = checkData.exists ? '' : 'none';
+
   box.classList.add('show');
   saveBtn.disabled = false;
 }
@@ -646,12 +668,15 @@ async function saveManual() {
   const res = await fetch('api/sessions', { method: 'POST',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (res.ok) {
+    const data = await res.json();
     document.getElementById('m-date').value = '';
     document.getElementById('m-arrived').value = '';
     document.getElementById('m-departed').value = '';
     document.getElementById('preview-box').classList.remove('show');
     document.getElementById('m-save-btn').disabled = true;
-    alert('Session saved!');
+    const dupWarn = document.getElementById('m-dup-warning');
+    if (dupWarn) dupWarn.style.display = 'none';
+    alert(data.replaced ? 'The previous session for this date was replaced with the new one.' : 'Session saved!');
   } else { alert('Failed: ' + await res.text()); }
 }
 

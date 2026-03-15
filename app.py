@@ -318,8 +318,18 @@ def api_sessions_create():
     if d <= a:
         return jsonify({"error": "departed must be after arrived"}), 400
 
+    session_date = a.strftime("%Y-%m-%d")
     pay = calculate_pay(a, d)
     conn = db()
+
+    # Delete any existing session for the same date (enforce one session per date)
+    existing = conn.execute(
+        "SELECT id FROM sessions WHERE date=?", (session_date,)
+    ).fetchone()
+    replaced = existing is not None
+    if replaced:
+        conn.execute("DELETE FROM sessions WHERE date=?", (session_date,))
+
     cur = conn.execute(
         """INSERT INTO sessions
            (date, arrived, departed, arrived_clip, departed_clip,
@@ -344,7 +354,22 @@ def api_sessions_create():
     conn.commit()
     row = conn.execute("SELECT * FROM sessions WHERE id=?", (cur.lastrowid,)).fetchone()
     conn.close()
-    return jsonify(dict(row)), 201
+    result = dict(row)
+    result["replaced"] = replaced
+    return jsonify(result), 201
+
+
+@app.route("/api/sessions/check-date")
+def api_sessions_check_date():
+    date = request.args.get("date")
+    if not date:
+        return jsonify({"error": "date is required"}), 400
+    conn = db()
+    row = conn.execute("SELECT id, arrived, departed FROM sessions WHERE date=?", (date,)).fetchone()
+    conn.close()
+    if row:
+        return jsonify({"exists": True, "session": dict(row)})
+    return jsonify({"exists": False})
 
 
 @app.route("/api/sessions/<int:session_id>", methods=["DELETE"])
