@@ -191,7 +191,6 @@ def ensure_thumb(rel: str) -> Path | None:
         subprocess.run(
             [
                 "ffmpeg", "-y",
-                "-ss", "1",
                 "-i", str(src),
                 "-frames:v", "1",
                 "-q:v", "3",
