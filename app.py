@@ -29,8 +29,8 @@ DB_PATH = DATA_DIR / "sessions.db"
 THUMBS_DIR = DATA_DIR / "thumbs"
 THUMBS_DIR.mkdir(parents=True, exist_ok=True)
 
-RATE_PEAK = 16.0
-RATE_OFFPEAK = 10.0
+RATE_PEAK = 10.0
+RATE_OFFPEAK = 16.0
 PEAK_START = 9   # 9 AM (inclusive)
 PEAK_END = 15    # 3 PM (exclusive)
 
