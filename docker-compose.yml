@@ -7,7 +7,7 @@ services:
     environment:
       CAMERA_ENTITY: "${CAMERA_ENTITY}"
       PERSON_SENSOR: "${PERSON_SENSOR}"
-      SNAPSHOT_DIR: "nest/event_media"
+      SNAPSHOT_DIR: ".cache/nest/event_media"
       TIMEZONE: "${TIMEZONE:-America/New_York}"
     volumes:
       # Mount your HA config directory so the app can read Nest clips.

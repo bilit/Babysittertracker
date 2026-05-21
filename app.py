@@ -42,7 +42,7 @@ def get_config() -> dict:
     return {
         "camera_entity": os.getenv("CAMERA_ENTITY", "camera.front_door"),
         "person_sensor": os.getenv("PERSON_SENSOR", "event.front_door_bell_motion"),
-        "snapshot_subdir": os.getenv("SNAPSHOT_DIR", "nest/event_media"),
+        "snapshot_subdir": os.getenv("SNAPSHOT_DIR", ".cache/nest/event_media"),
         "timezone": os.getenv("TIMEZONE", "America/New_York"),
     }
 
@@ -52,7 +52,7 @@ def get_tz():
 
 
 def clips_dir() -> Path:
-    subdir = get_config().get("snapshot_subdir", "nest/event_media")
+    subdir = get_config().get("snapshot_subdir", ".cache/nest/event_media")
     return Path("/config") / subdir
 
 

@@ -22,7 +22,7 @@ panel_title: Babysitter Tracker
 options:
   camera_entity: "camera.front_door"
   person_sensor: "event.front_door_bell_motion"
-  snapshot_subdir: "nest/event_media"
+  snapshot_subdir: ".cache/nest/event_media"
   timezone: "America/New_York"
 schema:
   camera_entity: str
